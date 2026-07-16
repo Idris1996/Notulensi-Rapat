@@ -3,15 +3,43 @@ import { NextResponse } from "next/server";
 
 export async function POST(request) {
   try {
-    const formData = await request.formData();
-    const audioFile = formData.get("file") || formData.get("audio");
-    const notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
+    const contentType = request.headers.get("content-type") || "";
+    let fileUri = "";
+    let mimeType = "";
+    let base64Data = "";
+    let notes = "";
 
-    if (!audioFile) {
-      return NextResponse.json(
-        { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
-        { status: 400 }
-      );
+    if (contentType.includes("application/json")) {
+      const body = await request.json();
+      fileUri = body.fileUri;
+      mimeType = body.mimeType;
+      notes = body.notes || body.realtimeTranscript || "";
+    } else {
+      const formData = await request.formData();
+      const audioFile = formData.get("file") || formData.get("audio");
+      notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
+
+      if (!audioFile) {
+        return NextResponse.json(
+          { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
+          { status: 400 }
+        );
+      }
+
+      // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
+      if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
+        return NextResponse.json(
+          { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
+          { status: 400 }
+        );
+      }
+
+      // Konversi file audio ke base64
+      const bytes = await audioFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      base64Data = buffer.toString("base64");
+
+      mimeType = audioFile.type || "audio/webm";
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -25,20 +53,6 @@ export async function POST(request) {
     // Inisialisasi Google GenAI SDK (menggunakan @google/generative-ai)
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
-    if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
-      return NextResponse.json(
-        { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
-        { status: 400 }
-      );
-    }
-
-    // Konversi file audio ke base64
-    const bytes = await audioFile.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    const base64Data = buffer.toString("base64");
-
-    let mimeType = audioFile.type || "audio/webm";
     if (mimeType.includes(";")) {
       mimeType = mimeType.split(";")[0].trim();
     }
@@ -111,17 +125,27 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 =============================================================================`;
     }
 
-    const result = await model.generateContent([
-      {
+    let contents = [];
+    if (fileUri) {
+      contents.push({
+        fileData: {
+          fileUri: fileUri,
+          mimeType: mimeType,
+        },
+      });
+    } else {
+      contents.push({
         inlineData: {
           mimeType: mimeType,
           data: base64Data,
         },
-      },
-      {
-        text: finalPrompt,
-      },
-    ]);
+      });
+    }
+    contents.push({
+      text: finalPrompt,
+    });
+
+    const result = await model.generateContent(contents);
 
     const responseText = result.response.text();
     if (!responseText) {
