@@ -26,6 +26,7 @@ export default function App() {
   // File Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [detectedDuration, setDetectedDuration] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Microphone Recording State
@@ -95,10 +96,22 @@ export default function App() {
   };
 
   const validateAndSetFile = (file: File) => {
-    if (file.type.startsWith("audio/")) {
+    if (file.type.startsWith("audio/") || file.name.endsWith(".mp3") || file.name.endsWith(".wav") || file.name.endsWith(".m4a") || file.name.endsWith(".aac") || file.name.endsWith(".ogg") || file.name.endsWith(".webm") || file.name.endsWith(".amr")) {
       setSelectedFile(file);
-      setAudioUrl(URL.createObjectURL(file));
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url);
+      setDetectedDuration(null);
       setError(null);
+
+      // Detect audio duration using standard HTML5 Audio
+      const audio = new Audio();
+      audio.src = url;
+      audio.onloadedmetadata = () => {
+        setDetectedDuration(audio.duration);
+      };
+      audio.onerror = () => {
+        setDetectedDuration(null);
+      };
     } else {
       setError("Format file tidak didukung. Silakan pilih berkas audio (MP3, WAV, M4A, dll).");
     }
@@ -212,6 +225,7 @@ export default function App() {
     setSelectedFile(null);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
+    setDetectedDuration(null);
     setRecordedBlob(null);
     if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     setRecordedUrl(null);
@@ -221,7 +235,7 @@ export default function App() {
     setInterimTranscript("");
   };
 
-  // Call the backend to process the audio via Gemini API (uses direct-to-Gemini resumable upload to bypass Vercel limits)
+  // Call the backend to process the audio via Gemini API
   const handleProcessAudio = async () => {
     const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
     if (!fileToProcess) {
@@ -239,7 +253,6 @@ export default function App() {
     let percentInterval: NodeJS.Timeout | null = null;
 
     try {
-      let fileUri = "";
       let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
       if (mimeType.includes(";")) {
         mimeType = mimeType.split(";")[0].trim();
@@ -248,166 +261,41 @@ export default function App() {
         mimeType = "audio/webm";
       }
 
-      // 1. Try to get direct-to-Gemini upload URL from server to bypass 4.5MB Vercel body limit
-      let uploadUrl = "";
-      try {
-        const initRes = await fetch("/api/get-upload-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileSize: fileToProcess.size,
-            mimeType: mimeType,
-            displayName: inputMethod === "upload" && selectedFile ? selectedFile.name : "rekaman_langsung.webm",
-          }),
-        });
+      setProgressMessage("Mengunggah berkas audio rapat ke server (0%)...");
 
-        if (initRes.ok) {
-          const initData = await initRes.json();
-          uploadUrl = initData.uploadUrl;
-        } else {
-          const errText = await initRes.text();
-          let parsedErr = "";
-          try {
-            parsedErr = JSON.parse(errText).error;
-          } catch (e) {}
-          throw new Error(parsedErr || `Gagal menginisialisasi rute upload (HTTP ${initRes.status}): ${errText.slice(0, 150)}`);
-        }
-      } catch (uploadInitErr: any) {
-        console.error("Direct-to-Gemini upload initialization failed:", uploadInitErr);
-        if (fileToProcess.size > 4 * 1024 * 1024) {
-          throw new Error(`Ukuran berkas terlalu besar (${(fileToProcess.size / (1024 * 1024)).toFixed(2)}MB). Gagal menggunakan jalur upload langsung: ${uploadInitErr.message}. Silakan pastikan environment server Anda sudah terkonfigurasi dengan benar.`);
-        }
-        console.warn("Direct-to-Gemini upload initialization failed, falling back to legacy multipart upload since file is small:", uploadInitErr);
-      }
+      const data = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/process-audio", true);
 
-      let data: any = {};
-
-      if (uploadUrl) {
-        // A. DIRECT RESUMABLE UPLOAD VIA GOOGLE'S SERVERS (NO VERCEL SIZE LIMIT)
-        setProgressMessage("Mengunggah berkas audio langsung ke Google (0%)...");
-        
-        const uploadResult = await new Promise<any>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("PUT", uploadUrl, true);
-          xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
-          xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
-
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              const percent = Math.round((event.loaded / event.total) * 90); // Scale upload progress to 90%
-              setProgressPercent(percent);
-              setProgressMessage(`Mengunggah berkas audio langsung ke Google (${percent}%)...`);
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                resolve(JSON.parse(xhr.responseText));
-              } catch (e) {
-                resolve(xhr.responseText);
-              }
-            } else {
-              reject(new Error(`Pengunggahan ke Google gagal (Status ${xhr.status}): ${xhr.responseText}`));
-            }
-          };
-
-          xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah langsung ke Google."));
-          xhr.send(fileToProcess);
-        });
-
-        console.log("Upload result from Google:", uploadResult);
-        fileUri = "";
-        if (uploadResult && typeof uploadResult === "object") {
-          fileUri = uploadResult.uri || uploadResult.file?.uri || "";
-          if (!fileUri && uploadResult.name) {
-            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+        // Track upload progress
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
+            setProgressPercent(percent);
+            setProgressMessage(`Mengunggah berkas audio rapat ke server (${percent}%)...`);
           }
-          if (!fileUri && uploadResult.file?.name) {
-            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
-          }
-        } else if (typeof uploadResult === "string" && uploadResult.trim().startsWith("{")) {
-          try {
-            const parsed = JSON.parse(uploadResult);
-            fileUri = parsed.uri || parsed.file?.uri || "";
-            if (!fileUri && parsed.name) {
-              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.name}`;
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch (e) {
+              resolve(xhr.responseText);
             }
-            if (!fileUri && parsed.file?.name) {
-              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.file.name}`;
-            }
-          } catch (e) {
-            console.error("Gagal mengurai response string dari Google:", e);
+          } else {
+            let errorMsg = "Gagal memproses audio rapat.";
+            try {
+              const resJson = JSON.parse(xhr.responseText);
+              errorMsg = resJson.error || errorMsg;
+            } catch (e) {}
+            reject(new Error(errorMsg));
           }
-        }
+        };
 
-        if (!fileUri) {
-          throw new Error(`Gagal mendapatkan file URI dari server Google. Response: ${JSON.stringify(uploadResult).slice(0, 200)}`);
-        }
+        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke server."));
 
-        // Now initiate server-side inference on the uploaded file reference
-        setProgressPercent(92);
-        setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
-
-        // Slow progress tick during Gemini transcription
-        percentInterval = setInterval(() => {
-          setProgressPercent((prev) => (prev < 98 ? prev + 1 : prev));
-        }, 1500);
-
-        const response = await fetch("/api/process-audio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileUri: fileUri,
-            mimeType: mimeType,
-            realtimeTranscript: realtimeTranscript,
-          }),
-        });
-
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          data = await response.json();
-        } else {
-          const text = await response.text();
-          throw new Error(`Server Error (${response.status}): ${text.slice(0, 200)}`);
-        }
-
-        if (!response.ok) {
-          throw new Error(data.error || "Gagal memproses draf rapat.");
-        }
-
-      } else {
-        // B. LEGACY FALLBACK FOR MULTIPART UPLOAD (FOR DEV / COMPATIBILITY)
-        setProgressMessage("Mengunggah berkas audio rapat ke server...");
-        
-        // Dynamic loading messages
-        const steps = [
-          "Mengunggah berkas audio rapat ke server...",
-          "Mengirimkan audio ke Gemini 3.5-flash...",
-          "Gemini sedang mentranskripsi percakapan...",
-          "Menyusun tata naskah dinas Pengadilan Agama Paniai...",
-          "Mengekstrak pimpinan rapat, agenda, dan peserta...",
-          "Merumuskan kesimpulan rapat secara dinas dan formal...",
-          "Menyelesaikan draf notulensi dinas..."
-        ];
-
-        let currentStep = 0;
-        stepInterval = setInterval(() => {
-          if (currentStep < steps.length - 1) {
-            currentStep++;
-            setProgressMessage(steps[currentStep]);
-          }
-        }, 4500);
-
-        percentInterval = setInterval(() => {
-          setProgressPercent((prev) => {
-            if (prev < 30) return prev + Math.floor(Math.random() * 4) + 3;
-            else if (prev < 80) return prev + Math.floor(Math.random() * 2) + 1;
-            else if (prev < 98) return prev + 1;
-            return prev;
-          });
-        }, 500);
-
+        // Build FormData
         const formData = new FormData();
         if (inputMethod === "upload" && selectedFile) {
           formData.append("audio", selectedFile, selectedFile.name);
@@ -419,22 +307,40 @@ export default function App() {
           formData.append("realtimeTranscript", realtimeTranscript);
         }
 
-        const response = await fetch("/api/process-audio", {
-          method: "POST",
-          body: formData,
+        xhr.send(formData);
+      });
+
+      // After upload finishes, show server-side process messages
+      setProgressPercent(65);
+      setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
+
+      const steps = [
+        "Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...",
+        "Mengirimkan audio ke Gemini 2.5-flash...",
+        "Gemini sedang mentranskripsi percakapan...",
+        "Mengekstrak pimpinan rapat, agenda, dan peserta...",
+        "Merumuskan kesimpulan rapat secara dinas dan formal...",
+        "Menyelesaikan draf notulensi dinas..."
+      ];
+
+      let currentStep = 0;
+      stepInterval = setInterval(() => {
+        if (currentStep < steps.length - 1) {
+          currentStep++;
+          setProgressMessage(steps[currentStep]);
+        }
+      }, 4000);
+
+      percentInterval = setInterval(() => {
+        setProgressPercent((prev) => {
+          if (prev < 98) return prev + 1;
+          return prev;
         });
+      }, 1000);
 
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          data = await response.json();
-        } else {
-          const text = await response.text();
-          throw new Error(`Server Error (${response.status}): ${text.slice(0, 200)}`);
-        }
-
-        if (!response.ok) {
-          throw new Error(data.error || "Gagal memproses audio rapat.");
-        }
+      // We already have 'data' from the successful XHR request!
+      if (!data || !data.result) {
+        throw new Error("Gagal memperoleh hasil notulensi rapat.");
       }
 
       // On successful transcription, jump progress to 100% and wait a moment for completion feel
@@ -695,9 +601,15 @@ from docx.oxml.ns import nsdecls, qn
                     Mendukung format WAV, MP3, M4A, AAC, dll. Maksimal ukuran file 50MB.
                   </p>
                   {selectedFile && (
-                    <span className="mt-3 text-xs bg-emerald-50 text-emerald-700 font-mono py-1 px-2.5 rounded-full border border-emerald-100">
-                      {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
-                    </span>
+                    <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
+                      <span className="text-xs bg-emerald-50 text-emerald-800 font-mono py-1 px-2.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-sm">
+                        <Clock className="h-3.5 w-3.5 text-emerald-600" />
+                        Durasi: {detectedDuration !== null ? formatTime(Math.round(detectedDuration)) : "Mendeteksi..."}
+                      </span>
+                      <span className="text-xs bg-stone-100 text-stone-700 font-mono py-1 px-2.5 rounded-full border border-stone-200 shadow-sm">
+                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+                      </span>
+                    </div>
                   )}
                 </div>
               ) : (

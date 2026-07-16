@@ -88,17 +88,74 @@ export default async function handler(req: Request, res: Response) {
         return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
       }
       mimeType = file.mimetype;
-      base64Data = file.buffer.toString("base64");
       realtimeTranscript = req.body.realtimeTranscript || "";
-    }
 
-    // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
-    if (mimeType.includes(";")) {
-      mimeType = mimeType.split(";")[0].trim();
-    }
-    // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
-    if (mimeType === "video/webm") {
-      mimeType = "audio/webm";
+      // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
+      if (mimeType.includes(";")) {
+        mimeType = mimeType.split(";")[0].trim();
+      }
+      // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
+      if (mimeType === "video/webm") {
+        mimeType = "audio/webm";
+      }
+
+      // If file is larger than 4MB, upload server-side to Gemini File API
+      if (file.buffer.length > 4 * 1024 * 1024) {
+        console.log(`Server-side uploading file (${(file.buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
+        const startRes = await fetch(
+          `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: {
+              "X-Goog-Upload-Protocol": "resumable",
+              "X-Goog-Upload-Command": "start",
+              "X-Goog-Upload-Header-Content-Length": file.buffer.length.toString(),
+              "X-Goog-Upload-Header-Content-Type": mimeType,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              file: {
+                displayName: file.originalname || "rekaman_rapat.webm",
+              },
+            }),
+          }
+        );
+
+        if (!startRes.ok) {
+          throw new Error(`Gagal menginisialisasi upload server ke Google: ${await startRes.text()}`);
+        }
+
+        const uploadUrl = startRes.headers.get("x-goog-upload-url");
+        if (!uploadUrl) {
+          throw new Error("Google tidak mengembalikan header x-goog-upload-url.");
+        }
+
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "X-Goog-Upload-Offset": "0",
+            "X-Goog-Upload-Command": "upload, finalize",
+            "Content-Type": mimeType,
+          },
+          body: file.buffer,
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
+        }
+
+        const uploadResult: any = await uploadRes.json();
+        fileUri = uploadResult.uri || uploadResult.file?.uri || "";
+        if (!fileUri && uploadResult.name) {
+          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+        }
+        if (!fileUri && uploadResult.file?.name) {
+          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+        }
+        console.log(`Server-side upload complete. fileUri: ${fileUri}`);
+      } else {
+        base64Data = file.buffer.toString("base64");
+      }
     }
 
     // Polling loop to wait for the file to become ACTIVE on Google's servers if a fileUri is provided

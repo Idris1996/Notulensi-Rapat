@@ -34,12 +34,83 @@ export async function POST(request) {
         );
       }
 
-      // Konversi file audio ke base64
+      // Ambil bytes dari file audio
       const bytes = await audioFile.arrayBuffer();
       const buffer = Buffer.from(bytes);
-      base64Data = buffer.toString("base64");
-
       mimeType = audioFile.type || "audio/webm";
+
+      if (mimeType.includes(";")) {
+        mimeType = mimeType.split(";")[0].trim();
+      }
+      if (mimeType === "video/webm") {
+        mimeType = "audio/webm";
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return NextResponse.json(
+          { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
+          { status: 500 }
+        );
+      }
+
+      // Jika file lebih besar dari 4MB, upload server-side ke Gemini File API
+      if (buffer.length > 4 * 1024 * 1024) {
+        console.log(`[NextJS] Server-side uploading file (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
+        const startRes = await fetch(
+          `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: {
+              "X-Goog-Upload-Protocol": "resumable",
+              "X-Goog-Upload-Command": "start",
+              "X-Goog-Upload-Header-Content-Length": buffer.length.toString(),
+              "X-Goog-Upload-Header-Content-Type": mimeType,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              file: {
+                displayName: audioFile.name || "rekaman_rapat.webm",
+              },
+            }),
+          }
+        );
+
+        if (!startRes.ok) {
+          throw new Error(`Gagal menginisialisasi upload server ke Google: ${await startRes.text()}`);
+        }
+
+        const uploadUrl = startRes.headers.get("x-goog-upload-url");
+        if (!uploadUrl) {
+          throw new Error("Google tidak mengembalikan header x-goog-upload-url.");
+        }
+
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "X-Goog-Upload-Offset": "0",
+            "X-Goog-Upload-Command": "upload, finalize",
+            "Content-Type": mimeType,
+          },
+          body: buffer,
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
+        }
+
+        const uploadResult = await uploadRes.json();
+        fileUri = uploadResult.uri || uploadResult.file?.uri || "";
+        if (!fileUri && uploadResult.name) {
+          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+        }
+        if (!fileUri && uploadResult.file?.name) {
+          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+        }
+        console.log(`[NextJS] Server-side upload complete. fileUri: ${fileUri}`);
+      } else {
+        base64Data = buffer.toString("base64");
+      }
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -52,14 +123,6 @@ export async function POST(request) {
 
     // Inisialisasi Google GenAI SDK (menggunakan @google/generative-ai)
     const genAI = new GoogleGenerativeAI(apiKey);
-
-    if (mimeType.includes(";")) {
-      mimeType = mimeType.split(";")[0].trim();
-    }
-    // Normalisasi jenis file webm jika terdeteksi video
-    if (mimeType === "video/webm") {
-      mimeType = "audio/webm";
-    }
 
     // Polling loop to wait for the file to become ACTIVE on Google's servers if a fileUri is provided
     if (fileUri) {

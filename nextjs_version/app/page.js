@@ -21,6 +21,7 @@ export default function Home() {
   const [recordedBlob, setRecordedBlob] = useState(null);
   const [recordedUrl, setRecordedUrl] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [detectedDuration, setDetectedDuration] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
@@ -151,7 +152,21 @@ export default function Home() {
     const file = e.target.files[0];
     if (file) {
       setSelectedFile(file);
+      setDetectedDuration(null);
       setError(null);
+
+      // Detect audio duration using standard HTML5 Audio
+      const audio = new Audio();
+      const url = URL.createObjectURL(file);
+      audio.src = url;
+      audio.onloadedmetadata = () => {
+        setDetectedDuration(audio.duration);
+        URL.revokeObjectURL(url);
+      };
+      audio.onerror = () => {
+        setDetectedDuration(null);
+        URL.revokeObjectURL(url);
+      };
     }
   };
 
@@ -161,7 +176,7 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  // Fetch API /api/process-audio via relative URL (uses direct-to-Gemini resumable upload to bypass Vercel limits)
+  // Fetch API /api/process-audio via relative URL
   const handleProcessAudio = async () => {
     const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
     if (!fileToProcess) {
@@ -186,158 +201,41 @@ export default function Home() {
         mimeType = "audio/webm";
       }
 
-      // 1. Try to get direct-to-Gemini upload URL from Next.js serverless route
-      let uploadUrl = "";
-      try {
-        const initRes = await fetch("/api/get-upload-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileSize: fileToProcess.size,
-            mimeType: mimeType,
-            displayName: inputMethod === "upload" ? selectedFile.name : "rekaman_notulen.webm",
-          }),
-        });
+      setProgressMessage("Mengunggah berkas audio rapat ke peladen (0%)...");
 
-        if (initRes.ok) {
-          const initData = await initRes.json();
-          uploadUrl = initData.uploadUrl;
-        } else {
-          const errText = await initRes.text();
-          let parsedErr = "";
-          try {
-            parsedErr = JSON.parse(errText).error;
-          } catch (e) {}
-          throw new Error(parsedErr || `Gagal menginisialisasi rute upload (HTTP ${initRes.status}): ${errText.slice(0, 150)}`);
-        }
-      } catch (uploadInitErr) {
-        console.error("Direct-to-Gemini upload initialization failed:", uploadInitErr);
-        if (fileToProcess.size > 4 * 1024 * 1024) {
-          throw new Error(`Ukuran berkas terlalu besar (${(fileToProcess.size / (1024 * 1024)).toFixed(2)}MB). Gagal menggunakan jalur upload langsung: ${uploadInitErr.message}. Silakan pastikan environment Vercel Anda sudah terupdate dengan commit terbaru.`);
-        }
-        console.warn("Direct-to-Gemini upload initialization failed, falling back to legacy multipart upload since file is small:", uploadInitErr);
-      }
+      const data = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/process-audio", true);
 
-      let data = {};
-
-      if (uploadUrl) {
-        // A. DIRECT RESUMABLE UPLOAD VIA GOOGLE'S SERVERS (NO VERCEL SIZE LIMIT)
-        setProgressMessage("Mengunggah berkas audio langsung ke Google (0%)...");
-        
-        const uploadResult = await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("PUT", uploadUrl, true);
-          xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
-          xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
-
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              const percent = Math.round((event.loaded / event.total) * 90); // Scale upload progress to 90%
-              setProgressPercent(percent);
-              setProgressMessage(`Mengunggah berkas audio langsung ke Google (${percent}%)...`);
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                resolve(JSON.parse(xhr.responseText));
-              } catch (e) {
-                resolve(xhr.responseText);
-              }
-            } else {
-              reject(new Error(`Pengunggahan ke Google gagal (Status ${xhr.status}): ${xhr.responseText}`));
-            }
-          };
-
-          xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah langsung ke Google."));
-          xhr.send(fileToProcess);
-        });
-
-        console.log("Upload result from Google:", uploadResult);
-        let fileUri = "";
-        if (uploadResult && typeof uploadResult === "object") {
-          fileUri = uploadResult.uri || uploadResult.file?.uri || "";
-          if (!fileUri && uploadResult.name) {
-            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+        // Track upload progress
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
+            setProgressPercent(percent);
+            setProgressMessage(`Mengunggah berkas audio rapat ke peladen (${percent}%)...`);
           }
-          if (!fileUri && uploadResult.file?.name) {
-            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch (e) {
+              resolve(xhr.responseText);
+            }
+          } else {
+            let errorMsg = "Gagal memproses audio rapat.";
+            try {
+              const resJson = JSON.parse(xhr.responseText);
+              errorMsg = resJson.error || errorMsg;
+            } catch (e) {}
+            reject(new Error(errorMsg));
           }
-        } else if (typeof uploadResult === "string" && uploadResult.trim().startsWith("{")) {
-          try {
-            const parsed = JSON.parse(uploadResult);
-            fileUri = parsed.uri || parsed.file?.uri || "";
-            if (!fileUri && parsed.name) {
-              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.name}`;
-            }
-            if (!fileUri && parsed.file?.name) {
-              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.file.name}`;
-            }
-          } catch (e) {
-            console.error("Gagal mengurai response string dari Google:", e);
-          }
-        }
+        };
 
-        if (!fileUri) {
-          throw new Error(`Gagal mendapatkan file URI dari server Google. Response: ${JSON.stringify(uploadResult).slice(0, 200)}`);
-        }
+        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke peladen."));
 
-        // Now initiate server-side inference on the uploaded file reference
-        setProgressPercent(92);
-        setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
-
-        // Slow progress tick during Gemini transcription
-        progressTimer = setInterval(() => {
-          setProgressPercent((prev) => (prev < 98 ? prev + 1 : prev));
-        }, 1500);
-
-        const response = await fetch("/api/process-audio", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileUri: fileUri,
-            mimeType: mimeType,
-            realtimeTranscript: realtimeTranscript,
-          }),
-        });
-
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-          data = await response.json();
-        } else {
-          const textStr = await response.text();
-          throw new Error(`Server Error (${response.status}): ${textStr.slice(0, 150)}`);
-        }
-
-        if (!response.ok) {
-          throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
-        }
-
-      } else {
-        // B. LEGACY FALLBACK FOR MULTIPART UPLOAD
-        setProgressMessage("Mengunggah berkas audio ke peladen...");
-        
-        // Staggered progressive indicators
-        progressTimer = setInterval(() => {
-          setProgressPercent((prev) => {
-            if (prev < 30) {
-              setProgressMessage("Membaca dan memproses gelombang audio...");
-              return prev + 5;
-            } else if (prev < 65) {
-              setProgressMessage("Mentranskripsikan ucapan dan mencocokkan kata...");
-              return prev + 3;
-            } else if (prev < 90) {
-              setProgressMessage("Menyusun draf notulensi dinas format PA Paniai...");
-              return prev + 2;
-            } else if (prev < 98) {
-              setProgressMessage("Menyelesaikan finalisasi draf...");
-              return prev + 1;
-            }
-            return prev;
-          });
-        }, 1500);
-
+        // Build FormData
         const formData = new FormData();
         if (inputMethod === "upload" && selectedFile) {
           formData.append("file", selectedFile, selectedFile.name);
@@ -349,22 +247,36 @@ export default function Home() {
           formData.append("notes", realtimeTranscript);
         }
 
-        const response = await fetch("/api/process-audio", {
-          method: "POST",
-          body: formData,
+        xhr.send(formData);
+      });
+
+      // After upload finishes, show server-side process messages
+      setProgressPercent(65);
+      setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
+
+      const steps = [
+        "Membaca dan memproses gelombang audio...",
+        "Mentranskripsikan ucapan dan mencocokkan kata...",
+        "Menyusun draf notulensi dinas format PA Paniai...",
+        "Menyelesaikan finalisasi draf..."
+      ];
+
+      let currentStep = 0;
+      progressTimer = setInterval(() => {
+        setProgressPercent((prev) => {
+          if (prev < 98) {
+            if (currentStep < steps.length && prev % 8 === 0) {
+              setProgressMessage(steps[currentStep]);
+              currentStep++;
+            }
+            return prev + 1;
+          }
+          return prev;
         });
+      }, 1000);
 
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-          data = await response.json();
-        } else {
-          const textStr = await response.text();
-          throw new Error(`Server Error (${response.status}): ${textStr.slice(0, 150)}`);
-        }
-
-        if (!response.ok) {
-          throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
-        }
+      if (!data || !data.result) {
+        throw new Error("Gagal memperoleh hasil notulensi rapat.");
       }
 
       setProgressPercent(100);
@@ -582,8 +494,12 @@ export default function Home() {
                   </label>
 
                   {selectedFile && (
-                    <div className="mt-3 text-center">
-                      <span className="text-xs bg-emerald-50 text-emerald-700 font-mono py-1 px-2.5 rounded-full border border-emerald-100 inline-block">
+                    <div className="mt-3 flex items-center justify-center gap-2">
+                      <span className="text-xs bg-emerald-50 text-emerald-800 font-mono py-1 px-2.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-sm">
+                        <Clock className="h-3.5 w-3.5 text-emerald-600" />
+                        Durasi: {detectedDuration !== null ? formatTime(Math.round(detectedDuration)) : "Mendeteksi..."}
+                      </span>
+                      <span className="text-xs bg-stone-100 text-stone-700 font-mono py-1 px-2.5 rounded-full border border-stone-200 inline-block shadow-sm">
                         {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
                       </span>
                     </div>
