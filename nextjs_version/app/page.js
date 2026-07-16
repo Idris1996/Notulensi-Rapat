@@ -161,94 +161,175 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  // Fetch API /api/process-audio via relative URL using FormData
+  // Fetch API /api/process-audio via relative URL (uses direct-to-Gemini resumable upload to bypass Vercel limits)
   const handleProcessAudio = async () => {
-    if (inputMethod === "record" && !recordedBlob) {
-      setError("Silakan rekam suara rapat terlebih dahulu.");
-      return;
-    }
-    if (inputMethod === "upload" && !selectedFile) {
-      setError("Silakan pilih file audio rapat terlebih dahulu.");
+    const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
+    if (!fileToProcess) {
+      setError(inputMethod === "upload" ? "Silakan pilih file audio rapat terlebih dahulu." : "Silakan rekam suara rapat terlebih dahulu.");
       return;
     }
 
     setIsProcessing(true);
     setError(null);
     setResultMarkdown("");
-    setProgressPercent(10);
-    setProgressMessage("Mengunggah berkas audio ke peladen...");
+    setProgressPercent(5);
+    setProgressMessage("Mempersiapkan berkas audio...");
 
-    // Staggered progressive indicators
-    const progressTimer = setInterval(() => {
-      setProgressPercent((prev) => {
-        if (prev < 30) {
-          setProgressMessage("Membaca dan memproses gelombang audio...");
-          return prev + 5;
-        } else if (prev < 65) {
-          setProgressMessage("Mentranskripsikan ucapan dan mencocokkan kata...");
-          return prev + 3;
-        } else if (prev < 90) {
-          setProgressMessage("Menyusun draf notulensi dinas format PA Paniai...");
-          return prev + 2;
-        } else if (prev < 98) {
-          setProgressMessage("Menyelesaikan finalisasi draf...");
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 1500);
+    let progressTimer = null;
 
     try {
-      const formData = new FormData();
-      
-      if (inputMethod === "upload" && selectedFile) {
-        // Parameter key: 'file' as requested
-        formData.append("file", selectedFile, selectedFile.name);
-      } else if (inputMethod === "record" && recordedBlob) {
-        formData.append("file", recordedBlob, "rekaman_notulen.webm");
+      let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
+      if (mimeType.includes(";")) {
+        mimeType = mimeType.split(";")[0].trim();
+      }
+      if (mimeType === "video/webm") {
+        mimeType = "audio/webm";
       }
 
-      // Send also real-time text if available to improve accuracy
-      if (realtimeTranscript) {
-        formData.append("notes", realtimeTranscript);
+      // 1. Try to get direct-to-Gemini upload URL from Next.js serverless route
+      let uploadUrl = "";
+      try {
+        const initRes = await fetch("/api/get-upload-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileSize: fileToProcess.size,
+            mimeType: mimeType,
+            displayName: inputMethod === "upload" ? selectedFile.name : "rekaman_notulen.webm",
+          }),
+        });
+
+        if (initRes.ok) {
+          const initData = await initRes.json();
+          uploadUrl = initData.uploadUrl;
+        }
+      } catch (uploadInitErr) {
+        console.warn("Direct-to-Gemini upload initialization failed, falling back to legacy multipart upload:", uploadInitErr);
       }
-
-      const response = await fetch("/api/process-audio", {
-        method: "POST",
-        body: formData,
-      });
-
-      console.log("[DEBUG_API] Response received from POST /api/process-audio");
-      console.log("[DEBUG_API] HTTP Status Code:", response.status);
-      console.log("[DEBUG_API] HTTP Status Text:", response.statusText);
-      
-      const contentType = response.headers.get("content-type") || "";
-      console.log("[DEBUG_API] Response Content-Type:", contentType);
 
       let data = {};
-      if (contentType.includes("application/json")) {
-        data = await response.json();
-        console.log("[DEBUG_API] Parsed JSON Response Data:", data);
-      } else {
-        const textStr = await response.text();
-        console.error("[DEBUG_API] Non-JSON (HTML/Text) Response Body (First 500 characters):", textStr.slice(0, 500));
-        
-        let customMessage = `Server Error (${response.status})`;
-        if (response.status === 404) {
-          customMessage += ": Rute API '/api/process-audio' tidak ditemukan (404 Not Found).\n" +
-                           "DIAGNOSIS:\n" +
-                           "1. Konflik Router: Next.js mendeteksi rute ganda di App Router ('app/api/process-audio/route.js') dan Pages Router ('pages/api/process-audio.js') yang memicu kegagalan build/routing.\n" +
-                           "2. Git Case-Sensitivity Bug: Vercel mendeteksi huruf besar (misalnya 'Process-Audio') dari riwayat commit Git Anda.\n" +
-                           "3. Root Directory salah dikonfigurasi di dashboard Vercel.";
-        } else {
-          customMessage += `: ${textStr.slice(0, 150)}`;
-        }
-        throw new Error(customMessage);
-      }
 
-      if (!response.ok) {
-        console.error("[DEBUG_API] API returned error status:", response.status, data);
-        throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
+      if (uploadUrl) {
+        // A. DIRECT RESUMABLE UPLOAD VIA GOOGLE'S SERVERS (NO VERCEL SIZE LIMIT)
+        setProgressMessage("Mengunggah berkas audio langsung ke Google (0%)...");
+        
+        const uploadResult = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", uploadUrl, true);
+          xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
+          xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 90); // Scale upload progress to 90%
+              setProgressPercent(percent);
+              setProgressMessage(`Mengunggah berkas audio langsung ke Google (${percent}%)...`);
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch (e) {
+                resolve(xhr.responseText);
+              }
+            } else {
+              reject(new Error(`Pengunggahan ke Google gagal (Status ${xhr.status}): ${xhr.responseText}`));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah langsung ke Google."));
+          xhr.send(fileToProcess);
+        });
+
+        const fileUri = uploadResult.file?.uri || "";
+        if (!fileUri) {
+          throw new Error("Gagal mendapatkan file URI dari server Google.");
+        }
+
+        // Now initiate server-side inference on the uploaded file reference
+        setProgressPercent(92);
+        setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
+
+        // Slow progress tick during Gemini transcription
+        progressTimer = setInterval(() => {
+          setProgressPercent((prev) => (prev < 98 ? prev + 1 : prev));
+        }, 1500);
+
+        const response = await fetch("/api/process-audio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileUri: fileUri,
+            mimeType: mimeType,
+            realtimeTranscript: realtimeTranscript,
+          }),
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          data = await response.json();
+        } else {
+          const textStr = await response.text();
+          throw new Error(`Server Error (${response.status}): ${textStr.slice(0, 150)}`);
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
+        }
+
+      } else {
+        // B. LEGACY FALLBACK FOR MULTIPART UPLOAD
+        setProgressMessage("Mengunggah berkas audio ke peladen...");
+        
+        // Staggered progressive indicators
+        progressTimer = setInterval(() => {
+          setProgressPercent((prev) => {
+            if (prev < 30) {
+              setProgressMessage("Membaca dan memproses gelombang audio...");
+              return prev + 5;
+            } else if (prev < 65) {
+              setProgressMessage("Mentranskripsikan ucapan dan mencocokkan kata...");
+              return prev + 3;
+            } else if (prev < 90) {
+              setProgressMessage("Menyusun draf notulensi dinas format PA Paniai...");
+              return prev + 2;
+            } else if (prev < 98) {
+              setProgressMessage("Menyelesaikan finalisasi draf...");
+              return prev + 1;
+            }
+            return prev;
+          });
+        }, 1500);
+
+        const formData = new FormData();
+        if (inputMethod === "upload" && selectedFile) {
+          formData.append("file", selectedFile, selectedFile.name);
+        } else if (inputMethod === "record" && recordedBlob) {
+          formData.append("file", recordedBlob, "rekaman_notulen.webm");
+        }
+
+        if (realtimeTranscript) {
+          formData.append("notes", realtimeTranscript);
+        }
+
+        const response = await fetch("/api/process-audio", {
+          method: "POST",
+          body: formData,
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          data = await response.json();
+        } else {
+          const textStr = await response.text();
+          throw new Error(`Server Error (${response.status}): ${textStr.slice(0, 150)}`);
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
+        }
       }
 
       setProgressPercent(100);
@@ -258,7 +339,7 @@ export default function Home() {
       console.error(err);
       setError(err.message || "Terjadi galat koneksi atau kegagalan server.");
     } finally {
-      clearInterval(progressTimer);
+      if (progressTimer) clearInterval(progressTimer);
       setIsProcessing(false);
     }
   };

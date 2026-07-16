@@ -571,21 +571,96 @@ app.get(["/kop surat.png", "/kop%20surat.png"], (req, res) => {
   }
 });
 
+// Endpoint to generate resumable upload URL for Gemini File API (bypass Vercel 4.5MB limit)
+app.post("/api/get-upload-url", async (req, res) => {
+  try {
+    const { fileSize, mimeType, displayName } = req.body;
+    if (!fileSize || !mimeType) {
+      return res.status(400).json({ error: "fileSize dan mimeType wajib disertakan." });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        error: "GEMINI_API_KEY tidak dikonfigurasi di environment. Silakan tambahkan di Settings > Secrets.",
+      });
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "X-Goog-Upload-Protocol": "resumable",
+          "X-Goog-Upload-Command": "start",
+          "X-Goog-Upload-Header-Content-Length": fileSize.toString(),
+          "X-Goog-Upload-Header-Content-Type": mimeType,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file: {
+            displayName: displayName || "Rapat Dinas Audio",
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({
+        error: `Gagal menginisialisasi upload ke Google: ${errText}`,
+      });
+    }
+
+    const uploadUrl = response.headers.get("x-goog-upload-url");
+    if (!uploadUrl) {
+      return res.status(500).json({
+        error: "Google tidak mengembalikan header x-goog-upload-url.",
+      });
+    }
+
+    res.json({ uploadUrl });
+  } catch (error: any) {
+    console.error("Gagal membuat upload URL:", error);
+    res.status(500).json({ error: error.message || "Gagal membuat upload URL." });
+  }
+});
+
 // Post audio to Gemini for Transcription & Formatting
 app.post("/api/process-audio", (req, res, next) => {
-  upload.single("audio")(req, res, (err) => {
-    if (err) {
-      const errMsg = `[${new Date().toISOString()}] Multer Upload Error: ${err.message}\n`;
-      fs.appendFileSync(path.join(process.cwd(), "server.log"), errMsg);
-      console.error("Gagal mengunggah berkas audio:", err);
-      return res.status(400).json({ error: `Gagal mengunggah berkas audio: ${err.message}` });
-    }
+  const contentType = req.headers["content-type"] || "";
+  if (contentType.includes("application/json")) {
     next();
-  });
+  } else {
+    upload.single("audio")(req, res, (err) => {
+      if (err) {
+        const errMsg = `[${new Date().toISOString()}] Multer Upload Error: ${err.message}\n`;
+        fs.appendFileSync(path.join(process.cwd(), "server.log"), errMsg);
+        console.error("Gagal mengunggah berkas audio:", err);
+        return res.status(400).json({ error: `Gagal mengunggah berkas audio: ${err.message}` });
+      }
+      next();
+    });
+  }
 }, async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
+    const contentType = req.headers["content-type"] || "";
+    let fileUri = "";
+    let mimeType = "";
+    let base64Data = "";
+    let realtimeTranscript = "";
+
+    if (contentType.includes("application/json")) {
+      fileUri = req.body.fileUri;
+      mimeType = req.body.mimeType;
+      realtimeTranscript = req.body.realtimeTranscript || "";
+    } else {
+      if (!req.file) {
+        return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
+      }
+      mimeType = req.file.mimetype;
+      base64Data = req.file.buffer.toString("base64");
+      realtimeTranscript = req.body.realtimeTranscript || "";
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -594,7 +669,6 @@ app.post("/api/process-audio", (req, res, next) => {
       });
     }
 
-    let mimeType = req.file.mimetype;
     // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
     if (mimeType.includes(";")) {
       mimeType = mimeType.split(";")[0].trim();
@@ -603,8 +677,6 @@ app.post("/api/process-audio", (req, res, next) => {
     if (mimeType === "video/webm") {
       mimeType = "audio/webm";
     }
-
-    const base64Data = req.file.buffer.toString("base64");
 
     const promptText = `
 Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
@@ -657,8 +729,6 @@ Pimpinan Rapat                                        Notulen Rapat
 NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
 `;
 
-    // Incorporate client-side Web Speech API realtime transcript if sent to enrich accuracy
-    const realtimeTranscript = req.body.realtimeTranscript || "";
     let finalPrompt = promptText;
     if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
       finalPrompt += `
@@ -672,20 +742,30 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 
     // Call the Gemini 2.5-flash model (latest recommended multimodal model for audio) using lazy client
     const ai = getGeminiClient();
+    const parts: any[] = [];
+    if (fileUri) {
+      parts.push({
+        fileData: {
+          fileUri: fileUri,
+          mimeType: mimeType,
+        },
+      });
+    } else {
+      parts.push({
+        inlineData: {
+          mimeType: mimeType,
+          data: base64Data,
+        },
+      });
+    }
+    parts.push({
+      text: finalPrompt,
+    });
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data,
-            },
-          },
-          {
-            text: finalPrompt,
-          },
-        ],
+        parts: parts,
       },
     });
 
