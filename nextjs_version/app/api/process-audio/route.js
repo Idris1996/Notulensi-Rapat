@@ -61,6 +61,49 @@ export async function POST(request) {
       mimeType = "audio/webm";
     }
 
+    // Polling loop to wait for the file to become ACTIVE on Google's servers if a fileUri is provided
+    if (fileUri) {
+      const fileId = fileUri.split("/").pop(); // extract the id, e.g. "abc123xyz"
+      const getFileUrl = `https://generativelanguage.googleapis.com/v1beta/files/${fileId}?key=${apiKey}`;
+      
+      let attempts = 0;
+      const maxAttempts = 30; // 30 attempts, 2 seconds interval = 60 seconds max
+      let isActive = false;
+      
+      console.log(`Starting NextJS file status polling for ${fileId}...`);
+      
+      while (attempts < maxAttempts) {
+        try {
+          const fileCheckRes = await fetch(getFileUrl);
+          if (fileCheckRes.ok) {
+            const fileCheckData = await fileCheckRes.json();
+            const state = fileCheckData.state;
+            console.log(`NextJS checking file status for ${fileId} (Attempt ${attempts + 1}/${maxAttempts}): state is ${state}`);
+            if (state === "ACTIVE") {
+              isActive = true;
+              break;
+            } else if (state === "FAILED") {
+              throw new Error("Pengolahan file audio gagal di server Google.");
+            }
+          } else {
+            console.warn(`Gagal memeriksa status file (HTTP ${fileCheckRes.status})`);
+          }
+        } catch (err) {
+          console.error("Error checking file status:", err);
+          if (err.message && err.message.includes("gagal")) {
+            throw err;
+          }
+        }
+        
+        attempts++;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      
+      if (!isActive) {
+        throw new Error("File audio masih dalam proses pemrosesan di server Google. Silakan klik tombol 'Proses Notulensi' lagi dalam beberapa detik.");
+      }
+    }
+
     const systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
 
 ATURAN KETAT (ANTI-HALUSINASI):

@@ -226,7 +226,7 @@ export default function Home() {
         
         const uploadResult = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.open("POST", uploadUrl, true);
+          xhr.open("PUT", uploadUrl, true);
           xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
           xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
 
