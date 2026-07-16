@@ -1,14 +1,15 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
-export async function POST(req) {
+export async function POST(request) {
   try {
-    const formData = await req.formData();
-    const audioFile = formData.get("file");
+    const formData = await request.formData();
+    const audioFile = formData.get("file") || formData.get("audio");
+    const notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
 
     if (!audioFile) {
       return NextResponse.json(
-        { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file'." },
+        { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
         { status: 400 }
       );
     }
@@ -92,6 +93,16 @@ NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
       systemInstruction: systemInstruction,
     });
 
+    let finalPrompt = "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
+    if (notes && notes.trim().length > 0) {
+      finalPrompt += `
+
+=== CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===
+Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text) dari mikrofon browser selama rapat berlangsung. Gunakan teks ini bersama dengan rekaman suara audio di atas untuk memverifikasi detail kata per kata, nama pimpinan, sub-bagian, dan poin rapat yang dibicarakan secara eksak. Pastikan hasil notulensi sangat lengkap dan mencakup semua materi dari awal hingga akhir transkripsi kasar ini, tanpa ada yang dikurangi atau disederhanakan:
+"${notes}"
+=============================================================================`;
+    }
+
     const result = await model.generateContent([
       {
         inlineData: {
@@ -99,7 +110,7 @@ NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
           data: base64Data,
         },
       },
-      "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.",
+      finalPrompt,
     ]);
 
     const responseText = result.response.text();

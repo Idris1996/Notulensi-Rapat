@@ -1,9 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
-export async function POST(req) {
+export async function POST(request) {
   try {
-    const formData = await req.formData();
+    const formData = await request.formData();
     const audioFile = formData.get("file") || formData.get("audio");
     const notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
 
