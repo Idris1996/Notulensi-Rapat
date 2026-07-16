@@ -202,9 +202,20 @@ export default function Home() {
         if (initRes.ok) {
           const initData = await initRes.json();
           uploadUrl = initData.uploadUrl;
+        } else {
+          const errText = await initRes.text();
+          let parsedErr = "";
+          try {
+            parsedErr = JSON.parse(errText).error;
+          } catch (e) {}
+          throw new Error(parsedErr || `Gagal menginisialisasi rute upload (HTTP ${initRes.status}): ${errText.slice(0, 150)}`);
         }
       } catch (uploadInitErr) {
-        console.warn("Direct-to-Gemini upload initialization failed, falling back to legacy multipart upload:", uploadInitErr);
+        console.error("Direct-to-Gemini upload initialization failed:", uploadInitErr);
+        if (fileToProcess.size > 4 * 1024 * 1024) {
+          throw new Error(`Ukuran berkas terlalu besar (${(fileToProcess.size / (1024 * 1024)).toFixed(2)}MB). Gagal menggunakan jalur upload langsung: ${uploadInitErr.message}. Silakan pastikan environment Vercel Anda sudah terupdate dengan commit terbaru.`);
+        }
+        console.warn("Direct-to-Gemini upload initialization failed, falling back to legacy multipart upload since file is small:", uploadInitErr);
       }
 
       let data = {};
