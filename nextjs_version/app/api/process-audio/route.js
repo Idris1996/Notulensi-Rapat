@@ -25,6 +25,14 @@ export async function POST(request) {
     // Inisialisasi Google GenAI SDK (menggunakan @google/generative-ai)
     const genAI = new GoogleGenerativeAI(apiKey);
 
+    // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
+    if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
+      return NextResponse.json(
+        { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
+        { status: 400 }
+      );
+    }
+
     // Konversi file audio ke base64
     const bytes = await audioFile.arrayBuffer();
     const buffer = Buffer.from(bytes);
@@ -89,7 +97,7 @@ Pimpinan Rapat                                        Notulen Rapat
 NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
       systemInstruction: systemInstruction,
     });
 
@@ -110,10 +118,15 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
           data: base64Data,
         },
       },
-      finalPrompt,
+      {
+        text: finalPrompt,
+      },
     ]);
 
     const responseText = result.response.text();
+    if (!responseText) {
+      throw new Error("Model Gemini tidak mengembalikan respon teks. Silakan rekam atau unggah ulang berkas audio.");
+    }
 
     return NextResponse.json({ result: responseText });
   } catch (error) {

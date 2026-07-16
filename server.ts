@@ -670,10 +670,10 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 `;
     }
 
-    // Call the Gemini 3.5-flash model using lazy client with correct parts schema
+    // Call the Gemini 2.5-flash model (latest recommended multimodal model for audio) using lazy client
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: {
         parts: [
           {
@@ -690,6 +690,9 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
     });
 
     const notulensiResult = response.text;
+    if (!notulensiResult) {
+      throw new Error("Gemini tidak mengembalikan hasil teks. Silakan coba rekam atau unggah ulang.");
+    }
     res.json({ result: notulensiResult });
   } catch (error: any) {
     const errorLog = `[${new Date().toISOString()}] Gemini Error: ${error.message}\nStack: ${error.stack}\n`;
