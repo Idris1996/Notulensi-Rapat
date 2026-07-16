@@ -218,17 +218,37 @@ export default function Home() {
         body: formData,
       });
 
+      console.log("[DEBUG_API] Response received from POST /api/process-audio");
+      console.log("[DEBUG_API] HTTP Status Code:", response.status);
+      console.log("[DEBUG_API] HTTP Status Text:", response.statusText);
+      
+      const contentType = response.headers.get("content-type") || "";
+      console.log("[DEBUG_API] Response Content-Type:", contentType);
+
       let data = {};
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
+      if (contentType.includes("application/json")) {
         data = await response.json();
+        console.log("[DEBUG_API] Parsed JSON Response Data:", data);
       } else {
         const textStr = await response.text();
-        throw new Error(`Server Error (${response.status}): ${textStr.slice(0, 150)}`);
+        console.error("[DEBUG_API] Non-JSON (HTML/Text) Response Body (First 500 characters):", textStr.slice(0, 500));
+        
+        let customMessage = `Server Error (${response.status})`;
+        if (response.status === 404) {
+          customMessage += ": Rute API '/api/process-audio' tidak ditemukan (404 Not Found).\n" +
+                           "DIAGNOSIS:\n" +
+                           "1. Konflik Router: Next.js mendeteksi rute ganda di App Router ('app/api/process-audio/route.js') dan Pages Router ('pages/api/process-audio.js') yang memicu kegagalan build/routing.\n" +
+                           "2. Git Case-Sensitivity Bug: Vercel mendeteksi huruf besar (misalnya 'Process-Audio') dari riwayat commit Git Anda.\n" +
+                           "3. Root Directory salah dikonfigurasi di dashboard Vercel.";
+        } else {
+          customMessage += `: ${textStr.slice(0, 150)}`;
+        }
+        throw new Error(customMessage);
       }
 
       if (!response.ok) {
-        throw new Error(data.error || "Gagal menyusun notulensi rapat.");
+        console.error("[DEBUG_API] API returned error status:", response.status, data);
+        throw new Error(data.error || `Gagal menyusun notulensi rapat (Status ${response.status}).`);
       }
 
       setProgressPercent(100);
