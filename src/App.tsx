@@ -316,9 +316,33 @@ export default function App() {
           xhr.send(fileToProcess);
         });
 
-        fileUri = uploadResult.file?.uri || "";
+        console.log("Upload result from Google:", uploadResult);
+        fileUri = "";
+        if (uploadResult && typeof uploadResult === "object") {
+          fileUri = uploadResult.uri || uploadResult.file?.uri || "";
+          if (!fileUri && uploadResult.name) {
+            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+          }
+          if (!fileUri && uploadResult.file?.name) {
+            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+          }
+        } else if (typeof uploadResult === "string" && uploadResult.trim().startsWith("{")) {
+          try {
+            const parsed = JSON.parse(uploadResult);
+            fileUri = parsed.uri || parsed.file?.uri || "";
+            if (!fileUri && parsed.name) {
+              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.name}`;
+            }
+            if (!fileUri && parsed.file?.name) {
+              fileUri = `https://generativelanguage.googleapis.com/v1beta/${parsed.file.name}`;
+            }
+          } catch (e) {
+            console.error("Gagal mengurai response string dari Google:", e);
+          }
+        }
+
         if (!fileUri) {
-          throw new Error("Gagal mendapatkan file URI dari server Google.");
+          throw new Error(`Gagal mendapatkan file URI dari server Google. Response: ${JSON.stringify(uploadResult).slice(0, 200)}`);
         }
 
         // Now initiate server-side inference on the uploaded file reference
