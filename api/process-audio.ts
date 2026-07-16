@@ -29,20 +29,31 @@ function runMiddleware(req: Request, res: Response, fn: any): Promise<any> {
   });
 }
 
+function parseJsonBody(req: Request): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
 export default async function handler(req: Request, res: Response) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
-    // Run the multer upload middleware
-    await runMiddleware(req, res, upload.single("audio"));
-
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
-    }
-
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
@@ -50,7 +61,37 @@ export default async function handler(req: Request, res: Response) {
       });
     }
 
-    let mimeType = file.mimetype;
+    const contentType = req.headers["content-type"] || "";
+    let fileUri = "";
+    let mimeType = "";
+    let base64Data = "";
+    let realtimeTranscript = "";
+
+    if (contentType.includes("application/json")) {
+      try {
+        const body = await parseJsonBody(req);
+        fileUri = body.fileUri || "";
+        mimeType = body.mimeType || "";
+        realtimeTranscript = body.realtimeTranscript || "";
+      } catch (parseErr: any) {
+        return res.status(400).json({ error: `Gagal membaca body JSON: ${parseErr.message}` });
+      }
+      if (!fileUri) {
+        return res.status(400).json({ error: "fileUri wajib disertakan untuk input JSON." });
+      }
+    } else {
+      // Run the multer upload middleware
+      await runMiddleware(req, res, upload.single("audio"));
+
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
+      }
+      mimeType = file.mimetype;
+      base64Data = file.buffer.toString("base64");
+      realtimeTranscript = req.body.realtimeTranscript || "";
+    }
+
     // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
     if (mimeType.includes(";")) {
       mimeType = mimeType.split(";")[0].trim();
@@ -60,7 +101,6 @@ export default async function handler(req: Request, res: Response) {
       mimeType = "audio/webm";
     }
 
-    const base64Data = file.buffer.toString("base64");
 
     const promptText = `
 Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
@@ -113,7 +153,6 @@ Pimpinan Rapat                                        Notulen Rapat
 NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
 `;
 
-    const realtimeTranscript = req.body.realtimeTranscript || "";
     let finalPrompt = promptText;
     if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
       finalPrompt += `
@@ -126,20 +165,31 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
     }
 
     const ai = new GoogleGenAI({ apiKey: apiKey });
+    
+    const parts: any[] = [];
+    if (fileUri) {
+      parts.push({
+        fileData: {
+          fileUri: fileUri,
+          mimeType: mimeType,
+        },
+      });
+    } else {
+      parts.push({
+        inlineData: {
+          mimeType: mimeType,
+          data: base64Data,
+        },
+      });
+    }
+    parts.push({
+      text: finalPrompt,
+    });
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data,
-            },
-          },
-          {
-            text: finalPrompt,
-          },
-        ],
+        parts: parts,
       },
     });
 
