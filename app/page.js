@@ -368,12 +368,12 @@ export default function Home() {
                     <div className="mt-4 flex items-center gap-3 bg-white p-3 border border-stone-200 rounded-lg text-left w-full shadow-sm">
                       <input
                         type="checkbox"
-                        id="use-realtime-speech-v2"
+                        id="use-realtime-speech"
                         checked={useRealtimeSpeech}
                         onChange={(e) => setUseRealtimeSpeech(e.target.checked)}
                         className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-stone-300 rounded cursor-pointer"
                       />
-                      <label htmlFor="use-realtime-speech-v2" className="text-xs text-stone-700 font-medium cursor-pointer select-none flex-1">
+                      <label htmlFor="use-realtime-speech" className="text-xs text-stone-700 font-medium cursor-pointer select-none flex-1">
                         <span className="font-bold text-[#064e3b]">Transkripsi Real-Time (Web Speech)</span>
                         <p className="text-[10px] text-stone-500 mt-0.5 font-normal leading-tight">
                           Tampilkan teks langsung di layar saat Anda sedang berbicara di rapat.
