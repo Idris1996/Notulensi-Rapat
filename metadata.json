@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Notulensi Rapat Otomatis",
+  "description": "Sistem otomatisasi notulensi rapat dinas untuk Pengadilan Agama Paniai menggunakan teknologi transkripsi dan pemformatan standar Mahkamah Agung RI ditenagai Gemini AI.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
