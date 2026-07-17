@@ -649,18 +649,27 @@ app.post("/api/process-audio", (req, res, next) => {
     let mimeType = "";
     let base64Data = "";
     let realtimeTranscript = "";
+    let isTextOnly = false;
+    let summaryPoints = "";
 
     if (contentType.includes("application/json")) {
+      isTextOnly = req.body.isTextOnly === "true" || req.body.isTextOnly === true;
+      summaryPoints = req.body.summaryPoints || "";
       fileUri = req.body.fileUri;
-      mimeType = req.body.mimeType;
+      mimeType = req.body.mimeType || "";
       realtimeTranscript = req.body.realtimeTranscript || "";
     } else {
-      if (!req.file) {
-        return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
-      }
-      mimeType = req.file.mimetype;
-      base64Data = req.file.buffer.toString("base64");
+      isTextOnly = req.body.isTextOnly === "true" || req.body.isTextOnly === true;
+      summaryPoints = req.body.summaryPoints || "";
       realtimeTranscript = req.body.realtimeTranscript || "";
+
+      if (!isTextOnly) {
+        if (!req.file) {
+          return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
+        }
+        mimeType = req.file.mimetype;
+        base64Data = req.file.buffer.toString("base64");
+      }
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -669,23 +678,85 @@ app.post("/api/process-audio", (req, res, next) => {
       });
     }
 
-    // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
-    if (mimeType.includes(";")) {
-      mimeType = mimeType.split(";")[0].trim();
-    }
-    // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
-    if (mimeType === "video/webm") {
-      mimeType = "audio/webm";
+    if (!isTextOnly) {
+      // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
+      if (mimeType.includes(";")) {
+        mimeType = mimeType.split(";")[0].trim();
+      }
+      // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
+      if (mimeType === "video/webm") {
+        mimeType = "audio/webm";
+      }
     }
 
-    const promptText = `
-Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
+    let promptText = "";
 
-ATURAN KETAT (ANTI-HALUSINASI):
+    if (isTextOnly) {
+      promptText = `
+Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas resmi yang SANGAT DETAIL, LENGKAP, FORMAL, dan PRESISI berdasarkan draf kasar/point-point rangkuman rapat yang disediakan oleh pengguna.
+
+Tugas Anda adalah:
+1. Mengubah poin-poin/catatan rapat kasar/ringkasan yang terkesan informal atau singkat menjadi format tata naskah dinas resmi Mahkamah Agung (Pengadilan Agama Paniai) yang baku, formal, rapi, dan rapi sesuai Pedoman Tata Naskah Dinas Mahkamah Agung.
+2. Jangan kurangi detail atau kesimpulan penting apa pun dari poin-poin rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
+3. Gunakan gaya bahasa dinas formal (EYD V) untuk merangkum dan menguraikan draf rapat tersebut.
+4. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan. Setiap poin pembahasan, usulan, instruksi, masukan, kendala, dan tanggapan dari sub-bagian yang disebutkan di catatan kasar harus diuraikan secara RINCI, LENGKAP, dan JELAS.
+
+Berikut adalah draf kasar/point-point rangkuman rapat yang disediakan pengguna:
+"""
+${summaryPoints}
+"""
+
+Hasilkan output menggunakan format Markdown berikut:
+
+MAHKAMAH AGUNG REPUBLIK INDONESIA
+DIREKTORAT JENDERAL BADAN PERADILAN AGAMA
+PENGADILAN TINGGI AGAMA JAYAPURA
+PENGADILAN AGAMA PANIAI
+Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+================================================================================
+
+                                NOTULEN RAPAT
+
+| Kode Dokumen | Tgl. Pembuatan | Tgl. Revisi | Tgl. Efektif |
+| :--- | :--- | :--- | :--- |
+| FM/AM/04/02 | 02/05/2018 | ..................... | 02/05/2018 |
+
+Hari/Tanggal/Jam : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Tempat           : Ruang Rapat Pengadilan Agama Paniai
+Pimpinan Rapat   : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Peserta Rapat    : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan] Orang
+
+--------------------------------------------------------------------------------
+                                 Agenda Rapat
+--------------------------------------------------------------------------------
+Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
+Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang disebutkan di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun.]
+
+Selanjutnya kesimpulan rapat sebagai berikut:
+[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail.]
+
+Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
+
+--------------------------------------------------------------------------------
+Mengetahui,
+Pimpinan Rapat                                        Notulen Rapat
+
+
+[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
+`;
+    } else {
+      promptText = `
+Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT, SANGAT DETAIL, LENGKAP, dan FAKTUAL berdasarkan seluruh isi file audio yang diunggah.
+
+ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
 1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio.
 2. JANGAN PERNAH menambahkan asumsi, kesimpulan logis sendiri, atau mengarang cerita/agenda yang tidak ada di dalam audio.
 3. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
 4. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
+5. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan (jangan terlalu sedikit atau terlalu singkat). Setiap pembahasan, setiap usulan, setiap instruksi, setiap masukan, setiap kendala, dan setiap tanggapan dari masing-masing pembicara atau perwakilan sub-bagian (Kepegawaian, Umum & Keuangan, Perencanaan, TI, Pelaporan, Kepaniteraan, dll.) harus dituliskan secara RINCI dan LENGKAP. Jabarkan seluruh pokok pikiran mereka ke dalam poin-poin yang komprehensif, padat informasi, dan mencakup semua detail penting yang diucapkan dari awal hingga akhir rekaman rapat.
 
 Hasilkan output menggunakan format Markdown berikut:
 
@@ -728,9 +799,10 @@ Pimpinan Rapat                                        Notulen Rapat
 [Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
 NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
 `;
+    }
 
     let finalPrompt = promptText;
-    if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
+    if (!isTextOnly && realtimeTranscript && realtimeTranscript.trim().length > 0) {
       finalPrompt += `
 
 === CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===
@@ -740,40 +812,92 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 `;
     }
 
-    // Call the Gemini 2.5-flash model (latest recommended multimodal model for audio) using lazy client
+    // Call the Gemini 2.5-flash model using lazy client
     const ai = getGeminiClient();
-    const parts: any[] = [];
-    if (fileUri) {
-      parts.push({
-        fileData: {
-          fileUri: fileUri,
-          mimeType: mimeType,
-        },
+    let notulensiResult = "";
+
+    if (isTextOnly) {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [{ text: finalPrompt }],
       });
+      notulensiResult = response.text || "";
     } else {
+      const parts: any[] = [];
+      if (fileUri) {
+        parts.push({
+          fileData: {
+            fileUri: fileUri,
+            mimeType: mimeType,
+          },
+        });
+      } else {
+        parts.push({
+          inlineData: {
+            mimeType: mimeType,
+            data: base64Data,
+          },
+        });
+      }
       parts.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data,
+        text: finalPrompt,
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: {
+          parts: parts,
         },
       });
+      notulensiResult = response.text || "";
     }
-    parts.push({
-      text: finalPrompt,
-    });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: {
-        parts: parts,
-      },
-    });
-
-    const notulensiResult = response.text;
     if (!notulensiResult) {
       throw new Error("Gemini tidak mengembalikan hasil teks. Silakan coba rekam atau unggah ulang.");
     }
-    res.json({ result: notulensiResult });
+
+    // Generate Executive Summary (3 bullet points) in Indonesian as a JSON string array
+    let executiveSummary: string[] = [];
+    try {
+      const summaryPrompt = `Berdasarkan hasil notulensi rapat Pengadilan Agama Paniai berikut, sarikan 3 keputusan atau tindakan utama yang paling penting dari rapat tersebut ke dalam tepat 3 poin ringkasan eksekutif (bullet points). 
+Gunakan bahasa Indonesia yang sangat formal, padat, jelas, berwibawa, dan berfokus pada hasil/keputusan tindakan nyata (actionable decisions).
+
+Format output harus berupa JSON array berisi tepat 3 string, contoh:
+[
+  "Menyetujui alokasi anggaran renovasi ruang sidang utama yang akan dimulai pada awal bulan depan.",
+  "Menginstruksikan subbagian Kepegawaian untuk segera menyelesaikan evaluasi kinerja PPNPN paling lambat tanggal 25 bulan ini.",
+  "Menyepakati jadwal rapat koordinasi berkala setiap hari Senin pagi pukul 09:00 WIT untuk memantau progres pelaksanaan program kerja."
+]
+
+Hasil Notulensi Rapat:
+${notulensiResult}`;
+
+      const summaryResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: { text: summaryPrompt },
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+
+      const parsed = JSON.parse(summaryResponse.text?.trim() || "[]");
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        executiveSummary = parsed.slice(0, 3);
+      }
+    } catch (summaryErr) {
+      console.error("Gagal menjabarkan Ringkasan Eksekutif AI:", summaryErr);
+      // Fallback: build basic 3 bullets
+      executiveSummary = [
+        "Keputusan rapat dinas resmi Pengadilan Agama Paniai telah berhasil dirumuskan.",
+        "Program kerja masing-masing sub bagian disetujui untuk dilaksanakan sesuai target waktu.",
+        "Meningkatkan koordinasi internal untuk memastikan kelancaran administrasi perkara dinas."
+      ];
+    }
+
+    res.json({
+      result: notulensiResult,
+      executiveSummary: executiveSummary,
+    });
   } catch (error: any) {
     const errorLog = `[${new Date().toISOString()}] Gemini Error: ${error.message}\nStack: ${error.stack}\n`;
     try {

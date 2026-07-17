@@ -48,6 +48,7 @@ export default function App() {
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [resultMarkdown, setResultMarkdown] = useState<string | null>(null);
+  const [executiveSummary, setExecutiveSummary] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Web Speech API Real-time Transcription State
@@ -267,6 +268,7 @@ export default function App() {
     setError(null);
     setRealtimeTranscript("");
     setInterimTranscript("");
+    setExecutiveSummary(null);
   };
 
   // Call the backend to process the audio or summary points via Gemini API
@@ -287,6 +289,7 @@ export default function App() {
     setIsProcessing(true);
     setError(null);
     setResultMarkdown(null);
+    setExecutiveSummary(null);
     setProgressPercent(0);
     setProgressMessage(inputMethod === "points" ? "Mempersiapkan data rangkuman..." : "Mempersiapkan berkas audio...");
 
@@ -431,6 +434,9 @@ export default function App() {
       await new Promise((resolve) => setTimeout(resolve, 800));
 
       setResultMarkdown(data.result);
+      if (data.executiveSummary) {
+        setExecutiveSummary(data.executiveSummary);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Terjadi kesalahan saat memproses audio rapat dinas.");
@@ -605,7 +611,7 @@ from docx.oxml.ns import nsdecls, qn
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Input Panel */}
-        <section className="lg:col-span-5 flex flex-col gap-6">
+        <section className="lg:col-span-4 flex flex-col gap-6">
           {/* Welcome and Context Panel */}
           <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5">
             <h2 className="text-base font-semibold text-stone-900 mb-2 flex items-center gap-2">
@@ -943,7 +949,7 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
         </section>
 
         {/* Right Column: Results & Previews */}
-        <section className="lg:col-span-7 flex flex-col gap-4">
+        <section className="lg:col-span-8 flex flex-col gap-4">
           {/* Header Actions for download */}
           {resultMarkdown && (
             <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-4 flex flex-wrap items-center justify-between gap-4">
@@ -975,309 +981,351 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
             </div>
           )}
 
-          {/* Paper View Container */}
-          <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden flex-1 flex flex-col min-h-[500px]">
-            {/* View status bar */}
-            <div className="border-b border-stone-200 bg-stone-50 py-3 px-5 flex items-center justify-between">
-              <span className="text-xs font-bold text-stone-600 font-mono uppercase tracking-wide">
-                Draf Notulen Dinas Resmi
-              </span>
-              <span className="text-xs text-stone-400 font-medium">Pratinjau Kertas Resmi</span>
-            </div>
+          {/* Paper View Container layout wrapper */}
+          <div className="flex flex-col xl:flex-row gap-6 items-start flex-1 w-full">
+            {/* Paper View Container */}
+            <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden flex-1 flex flex-col min-h-[500px] w-full">
+              {/* View status bar */}
+              <div className="border-b border-stone-200 bg-stone-50 py-3 px-5 flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-600 font-mono uppercase tracking-wide">
+                  Draf Notulen Dinas Resmi
+                </span>
+                <span className="text-xs text-stone-400 font-medium">Pratinjau Kertas Resmi</span>
+              </div>
 
-            {/* Main Result Display */}
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-[#fafafa] flex flex-col justify-center">
-              {isProcessing ? (
-                /* Dynamic Processing State with Percentage Bar */
-                <div className="text-center py-12 flex flex-col items-center justify-center max-w-sm mx-auto font-sans w-full">
-                  <div className="relative mb-4">
-                    {/* Ring Spinner */}
-                    <div className="h-20 w-20 rounded-full border-4 border-stone-200 border-t-[#064e3b] animate-spin"></div>
-                    {/* Center Icon/Percent */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-xs font-bold text-[#064e3b] font-mono leading-none">{progressPercent}%</span>
-                      <span className="text-[8px] text-stone-400 uppercase font-bold mt-0.5 tracking-wider">proses</span>
+              {/* Main Result Display */}
+              <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-[#fafafa] flex flex-col justify-center">
+                {isProcessing ? (
+                  /* Dynamic Processing State with Percentage Bar */
+                  <div className="text-center py-12 flex flex-col items-center justify-center max-w-sm mx-auto font-sans w-full">
+                    <div className="relative mb-4">
+                      {/* Ring Spinner */}
+                      <div className="h-20 w-20 rounded-full border-4 border-stone-200 border-t-[#064e3b] animate-spin"></div>
+                      {/* Center Icon/Percent */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-xs font-bold text-[#064e3b] font-mono leading-none">{progressPercent}%</span>
+                        <span className="text-[8px] text-stone-400 uppercase font-bold mt-0.5 tracking-wider">proses</span>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <h3 className="text-sm font-bold text-stone-800">Sedang Menyusun Notulensi Rapat...</h3>
-                  
-                  {/* Visual Percentage Progress Bar */}
-                  <div className="w-full bg-stone-200 h-2.5 rounded-full mt-3.5 mb-2 overflow-hidden shadow-inner relative">
-                    <div
-                      className="bg-gradient-to-r from-emerald-600 to-[#064e3b] h-full rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${progressPercent}%` }}
-                    ></div>
-                  </div>
-                  <div className="flex items-center justify-between w-full text-[10px] font-mono text-stone-500 mb-4 px-1">
-                    <span>Tahap Analisis AI</span>
-                    <span className="font-bold text-[#064e3b]">{progressPercent}% selesai</span>
-                  </div>
-
-                  <p className="text-stone-600 text-xs font-semibold leading-relaxed bg-[#f1f5f3] py-2 px-3.5 border border-[#d2dfd8] rounded-lg w-full mb-6">
-                    {progressMessage}
-                  </p>
-                  
-                  {/* Visual list of tasks with dynamically lighting checklist based on percentage */}
-                  <div className="w-full text-left border-t border-stone-200 pt-5 space-y-3">
-                    <div className="flex items-start gap-2.5 text-xs">
-                      <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                        progressPercent >= 30 
-                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
-                          : "bg-emerald-500 text-white animate-pulse"
-                      }`}>
-                        {progressPercent >= 30 ? "✓" : "1"}
-                      </span>
-                      <span className={progressPercent >= 30 ? "text-stone-400 line-through" : "text-stone-800 font-medium"}>
-                        Mengunggah & Membaca Gelombang Audio
-                      </span>
+                    
+                    <h3 className="text-sm font-bold text-stone-800">Sedang Menyusun Notulensi Rapat...</h3>
+                    
+                    {/* Visual Percentage Progress Bar */}
+                    <div className="w-full bg-stone-200 h-2.5 rounded-full mt-3.5 mb-2 overflow-hidden shadow-inner relative">
+                      <div
+                        className="bg-gradient-to-r from-emerald-600 to-[#064e3b] h-full rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${progressPercent}%` }}
+                      ></div>
+                    </div>
+                    <div className="flex items-center justify-between w-full text-[10px] font-mono text-stone-500 mb-4 px-1">
+                      <span>Tahap Analisis AI</span>
+                      <span className="font-bold text-[#064e3b]">{progressPercent}% selesai</span>
                     </div>
 
-                    <div className="flex items-start gap-2.5 text-xs">
-                      <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                        progressPercent >= 65 
-                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
-                          : progressPercent >= 30 
-                            ? "bg-[#064e3b] text-white animate-pulse" 
-                            : "bg-stone-100 text-stone-400 border border-stone-200"
-                      }`}>
-                        {progressPercent >= 65 ? "✓" : "2"}
-                      </span>
-                      <span className={
-                        progressPercent >= 65 
-                          ? "text-stone-400 line-through" 
-                          : progressPercent >= 30 
-                            ? "text-stone-800 font-medium" 
-                            : "text-stone-400"
-                      }>
-                        Transkripsi Detail & Sinkronisasi Suara
-                      </span>
-                    </div>
+                    <p className="text-stone-600 text-xs font-semibold leading-relaxed bg-[#f1f5f3] py-2 px-3.5 border border-[#d2dfd8] rounded-lg w-full mb-6">
+                      {progressMessage}
+                    </p>
+                    
+                    {/* Visual list of tasks with dynamically lighting checklist based on percentage */}
+                    <div className="w-full text-left border-t border-stone-200 pt-5 space-y-3">
+                      <div className="flex items-start gap-2.5 text-xs">
+                        <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                          progressPercent >= 30 
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                            : "bg-emerald-500 text-white animate-pulse"
+                        }`}>
+                          {progressPercent >= 30 ? "✓" : "1"}
+                        </span>
+                        <span className={progressPercent >= 30 ? "text-stone-400 line-through" : "text-stone-800 font-medium"}>
+                          Mengunggah & Membaca Gelombang Audio
+                        </span>
+                      </div>
 
-                    <div className="flex items-start gap-2.5 text-xs">
-                      <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                        progressPercent >= 90 
-                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
-                          : progressPercent >= 65 
-                            ? "bg-[#064e3b] text-white animate-pulse" 
-                            : "bg-stone-100 text-stone-400 border border-stone-200"
-                      }`}>
-                        {progressPercent >= 90 ? "✓" : "3"}
-                      </span>
-                      <span className={
-                        progressPercent >= 90 
-                          ? "text-stone-400 line-through" 
-                          : progressPercent >= 65 
-                            ? "text-stone-800 font-medium" 
-                            : "text-stone-400"
-                      }>
-                        Penyusunan Format Tata Naskah Dinas Resmi
-                      </span>
-                    </div>
+                      <div className="flex items-start gap-2.5 text-xs">
+                        <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                          progressPercent >= 65 
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                            : progressPercent >= 30 
+                              ? "bg-[#064e3b] text-white animate-pulse" 
+                              : "bg-stone-100 text-stone-400 border border-stone-200"
+                        }`}>
+                          {progressPercent >= 65 ? "✓" : "2"}
+                        </span>
+                        <span className={
+                          progressPercent >= 65 
+                            ? "text-stone-400 line-through" 
+                            : progressPercent >= 30 
+                              ? "text-stone-800 font-medium" 
+                              : "text-stone-400"
+                        }>
+                          Transkripsi Detail & Sinkronisasi Suara
+                        </span>
+                      </div>
 
-                    <div className="flex items-start gap-2.5 text-xs">
-                      <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                        progressPercent >= 100 
-                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
-                          : progressPercent >= 90 
-                            ? "bg-[#064e3b] text-white animate-pulse" 
-                            : "bg-stone-100 text-stone-400 border border-stone-200"
-                      }`}>
-                        {progressPercent >= 100 ? "✓" : "4"}
-                      </span>
-                      <span className={
-                        progressPercent >= 100 
-                          ? "text-stone-400 line-through" 
-                          : progressPercent >= 90 
-                            ? "text-stone-800 font-medium" 
-                            : "text-stone-400"
-                      }>
-                        Finalisasi Dokumen & Pembuatan File Unduhan
-                      </span>
+                      <div className="flex items-start gap-2.5 text-xs">
+                        <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                          progressPercent >= 90 
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                            : progressPercent >= 65 
+                              ? "bg-[#064e3b] text-white animate-pulse" 
+                              : "bg-stone-100 text-stone-400 border border-stone-200"
+                        }`}>
+                          {progressPercent >= 90 ? "✓" : "3"}
+                        </span>
+                        <span className={
+                          progressPercent >= 90 
+                            ? "text-stone-400 line-through" 
+                            : progressPercent >= 65 
+                              ? "text-stone-800 font-medium" 
+                              : "text-stone-400"
+                        }>
+                          Penyusunan Format Tata Naskah Dinas Resmi
+                        </span>
+                      </div>
+
+                      <div className="flex items-start gap-2.5 text-xs">
+                        <span className={`mt-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                          progressPercent >= 100 
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                            : progressPercent >= 90 
+                              ? "bg-[#064e3b] text-white animate-pulse" 
+                              : "bg-stone-100 text-stone-400 border border-stone-200"
+                        }`}>
+                          {progressPercent >= 100 ? "✓" : "4"}
+                        </span>
+                        <span className={
+                          progressPercent >= 100 
+                            ? "text-stone-400 line-through" 
+                            : progressPercent >= 90 
+                              ? "text-stone-800 font-medium" 
+                              : "text-stone-400"
+                        }>
+                          Finalisasi Dokumen & Pembuatan File Unduhan
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : error ? (
-                /* Error State */
-                <div className="text-center py-12 max-w-md mx-auto flex flex-col items-center font-sans">
-                  <div className="bg-rose-50 text-rose-500 p-4 rounded-full mb-3.5 border border-rose-100">
-                    <AlertCircle className="h-8 w-8" />
+                ) : error ? (
+                  /* Error State */
+                  <div className="text-center py-12 max-w-md mx-auto flex flex-col items-center font-sans">
+                    <div className="bg-rose-50 text-rose-500 p-4 rounded-full mb-3.5 border border-rose-100">
+                      <AlertCircle className="h-8 w-8" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-stone-900">Gagal Memproses Notulensi</h3>
+                    <p className="text-stone-500 text-xs mt-2 leading-relaxed">{error}</p>
+                    <button
+                      onClick={() => setError(null)}
+                      className="mt-5 py-2 px-4 bg-stone-800 text-white rounded-lg text-xs font-semibold hover:bg-black shadow transition-all animate-pulse"
+                    >
+                      Coba Lagi
+                    </button>
                   </div>
-                  <h3 className="text-sm font-semibold text-stone-900">Gagal Memproses Notulensi</h3>
-                  <p className="text-stone-500 text-xs mt-2 leading-relaxed">{error}</p>
-                  <button
-                    onClick={() => setError(null)}
-                    className="mt-5 py-2 px-4 bg-stone-800 text-white rounded-lg text-xs font-semibold hover:bg-black shadow transition-all animate-pulse"
-                  >
-                    Coba Lagi
-                  </button>
-                </div>
-              ) : resultMarkdown && docMetadata ? (
-                /* Beautiful Paper Layout with Real-time styling */
-                <div className="bg-white shadow-md border border-stone-100 rounded-sm max-w-2xl mx-auto w-full p-8 md:p-12 font-serif text-stone-800 leading-relaxed relative select-text min-h-[850px]">
-                  {/* Watermark Crest (Styled subtly) */}
-                  <div className="absolute inset-0 opacity-[0.015] flex items-center justify-center pointer-events-none">
-                    <Scale className="h-96 w-96 text-stone-900" />
-                  </div>
+                ) : resultMarkdown && docMetadata ? (
+                  /* Beautiful Paper Layout with Real-time styling */
+                  <div className="bg-white shadow-md border border-stone-100 rounded-sm max-w-2xl mx-auto w-full p-8 md:p-12 font-serif text-stone-800 leading-relaxed relative select-text min-h-[850px]">
+                    {/* Watermark Crest (Styled subtly) */}
+                    <div className="absolute inset-0 opacity-[0.015] flex items-center justify-center pointer-events-none">
+                      <Scale className="h-96 w-96 text-stone-900" />
+                    </div>
 
-                  {/* COP SURAT */}
-                  <div className="text-center border-b-[3px] border-double border-stone-800 pb-3 mb-5">
-                    <img 
-                      src="/kop surat.png" 
-                      alt="Kop Surat Pengadilan Agama Paniai" 
-                      className="w-full h-auto max-h-[140px] mx-auto object-contain block"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        // Fallback to text header if image fails to load
-                        e.currentTarget.style.display = 'none';
-                        const fallbackContainer = document.getElementById('cop-surat-text-fallback');
-                        if (fallbackContainer) {
-                          fallbackContainer.classList.remove('hidden');
-                        }
-                      }}
-                    />
-                    <div id="cop-surat-text-fallback" className="hidden">
-                      <h2 className="text-sm md:text-base font-bold tracking-wide text-stone-900 uppercase">
-                        Mahkamah Agung Republik Indonesia
+                    {/* COP SURAT */}
+                    <div className="text-center border-b-[3px] border-double border-stone-800 pb-3 mb-5">
+                      <img 
+                        src="/kop surat.png" 
+                        alt="Kop Surat Pengadilan Agama Paniai" 
+                        className="w-full h-auto max-h-[140px] mx-auto object-contain block"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          // Fallback to text header if image fails to load
+                          e.currentTarget.style.display = 'none';
+                          const fallbackContainer = document.getElementById('cop-surat-text-fallback');
+                          if (fallbackContainer) {
+                            fallbackContainer.classList.remove('hidden');
+                          }
+                        }}
+                      />
+                      <div id="cop-surat-text-fallback" className="hidden">
+                        <h2 className="text-sm md:text-base font-bold tracking-wide text-stone-900 uppercase">
+                          Mahkamah Agung Republik Indonesia
+                        </h2>
+                        <h3 className="text-[11px] md:text-xs font-bold text-stone-900 uppercase mt-0.5">
+                          Direktorat Jenderal Badan Peradilan Agama
+                        </h3>
+                        <h3 className="text-[11px] md:text-xs font-bold text-stone-900 uppercase mt-0.5">
+                          Pengadilan Tinggi Agama Jayapura
+                        </h3>
+                        <h1 className="text-sm md:text-base font-bold tracking-wider text-stone-900 uppercase mt-0.5">
+                          Pengadilan Agama Paniai
+                        </h1>
+                        <p className="text-[9px] md:text-[10px] italic font-sans text-stone-600 mt-1.5">
+                          Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+                        </p>
+                        <p className="text-[9px] md:text-[10px] italic font-sans text-stone-600">
+                          www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* NOTULEN RAPAT TITLE */}
+                    <div className="text-center mb-5">
+                      <h2 className="text-base md:text-lg font-bold tracking-widest text-stone-900 uppercase decoration-double">
+                        NOTULEN RAPAT
                       </h2>
-                      <h3 className="text-[11px] md:text-xs font-bold text-stone-900 uppercase mt-0.5">
-                        Direktorat Jenderal Badan Peradilan Agama
-                      </h3>
-                      <h3 className="text-[11px] md:text-xs font-bold text-stone-900 uppercase mt-0.5">
-                        Pengadilan Tinggi Agama Jayapura
-                      </h3>
-                      <h1 className="text-sm md:text-base font-bold tracking-wider text-stone-900 uppercase mt-0.5">
-                        Pengadilan Agama Paniai
-                      </h1>
-                      <p className="text-[9px] md:text-[10px] italic font-sans text-stone-600 mt-1.5">
-                        Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
-                      </p>
-                      <p className="text-[9px] md:text-[10px] italic font-sans text-stone-600">
-                        www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
-                      </p>
                     </div>
-                  </div>
 
-                  {/* NOTULEN RAPAT TITLE */}
-                  <div className="text-center mb-5">
-                    <h2 className="text-base md:text-lg font-bold tracking-widest text-stone-900 uppercase decoration-double">
-                      NOTULEN RAPAT
-                    </h2>
-                  </div>
-
-                  {/* KODE DOKUMEN TABLE */}
-                  <div className="mb-6 font-sans text-[10px] md:text-xs">
-                    <table className="w-full border-collapse border border-stone-800">
-                      <thead>
-                        <tr className="bg-stone-50 text-stone-900 font-semibold">
-                          <th className="border border-stone-800 p-2 text-center">Kode Dokumen</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Pembuatan</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Revisi</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Efektif</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="text-stone-800 text-center">
-                          <td className="border border-stone-800 p-2">FM/AM/04/02</td>
-                          <td className="border border-stone-800 p-2">02/05/2018</td>
-                          <td className="border border-stone-800 p-2">{docMetadata.tglRevisi}</td>
-                          <td className="border border-stone-800 p-2">02/05/2018</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* METADATA LIST */}
-                  <div className="space-y-2 mb-6 text-xs md:text-sm">
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Hari/Tanggal/Jam</span>
-                      <span className="col-span-8">: {docMetadata.hariTanggal}</span>
+                    {/* KODE DOKUMEN TABLE */}
+                    <div className="mb-6 font-sans text-[10px] md:text-xs">
+                      <table className="w-full border-collapse border border-stone-800">
+                        <thead>
+                          <tr className="bg-stone-50 text-stone-900 font-semibold">
+                            <th className="border border-stone-800 p-2 text-center">Kode Dokumen</th>
+                            <th className="border border-stone-800 p-2 text-center">Tgl. Pembuatan</th>
+                            <th className="border border-stone-800 p-2 text-center">Tgl. Revisi</th>
+                            <th className="border border-stone-800 p-2 text-center">Tgl. Efektif</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="text-stone-800 text-center">
+                            <td className="border border-stone-800 p-2">FM/AM/04/02</td>
+                            <td className="border border-stone-800 p-2">02/05/2018</td>
+                            <td className="border border-stone-800 p-2">{docMetadata.tglRevisi}</td>
+                            <td className="border border-stone-800 p-2">02/05/2018</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Tempat</span>
-                      <span className="col-span-8">: {docMetadata.tempat}</span>
-                    </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Pimpinan Rapat</span>
-                      <span className="col-span-8">: {docMetadata.pimpinan}</span>
-                    </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Peserta Rapat</span>
-                      <span className="col-span-8">: {docMetadata.peserta}</span>
-                    </div>
-                  </div>
 
-                  <hr className="border-t border-stone-800 my-4" />
-
-                  {/* AGENDA RAPAT */}
-                  <div className="mb-6">
-                    <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
-                      Agenda Rapat
-                    </h3>
-                    <div className="text-xs md:text-sm space-y-2 pl-2">
-                      {docMetadata.agendaContent.map((point, index) => {
-                        // Check if it matches opening sentences or numeric points
-                        const isHeading = point.includes("Rapat dibuka") || point.includes("Selanjutnya rapat dipimpin");
-                        return (
-                          <p key={index} className={`${isHeading ? "" : "pl-4"} text-stone-900`}>
-                            {point}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <hr className="border-t border-stone-800 my-4" />
-
-                  {/* KESIMPULAN RAPAT */}
-                  <div className="mb-6">
-                    <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
-                      Kesimpulan / Keputusan Rapat
-                    </h3>
-                    <div className="text-xs md:text-sm space-y-2 pl-2">
-                      {docMetadata.kesimpulanContent.map((point, index) => {
-                        const isClosing = point.includes("rapat menutup") || point.includes("ALHAMDULILLAHI");
-                        return (
-                          <p key={index} className={`${isClosing ? "" : "pl-4"} text-stone-900`}>
-                            {point}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <hr className="border-t border-stone-800 my-5" />
-
-                  {/* SIGNATURES SECTION */}
-                  <div className="text-xs md:text-sm">
-                    <p className="mb-4">Mengetahui,</p>
-                    <div className="grid grid-cols-2 gap-8 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className="font-bold">Pimpinan Rapat</span>
-                        <span className="mt-16 font-bold">{docMetadata.pimpinan.split(" (")[0]}</span>
-                        <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
+                    {/* METADATA LIST */}
+                    <div className="space-y-2 mb-6 text-xs md:text-sm">
+                      <div className="grid grid-cols-12 gap-1">
+                        <span className="col-span-4 font-bold">Hari/Tanggal/Jam</span>
+                        <span className="col-span-8">: {docMetadata.hariTanggal}</span>
                       </div>
-                      <div className="flex flex-col items-center">
-                        <span className="font-bold">Notulen Rapat</span>
-                        <span className="mt-16 font-bold">Notulen Pengadilan</span>
-                        <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
+                      <div className="grid grid-cols-12 gap-1">
+                        <span className="col-span-4 font-bold">Tempat</span>
+                        <span className="col-span-8">: {docMetadata.tempat}</span>
+                      </div>
+                      <div className="grid grid-cols-12 gap-1">
+                        <span className="col-span-4 font-bold">Pimpinan Rapat</span>
+                        <span className="col-span-8">: {docMetadata.pimpinan}</span>
+                      </div>
+                      <div className="grid grid-cols-12 gap-1">
+                        <span className="col-span-4 font-bold">Peserta Rapat</span>
+                        <span className="col-span-8">: {docMetadata.peserta}</span>
+                      </div>
+                    </div>
+
+                    <hr className="border-t border-stone-800 my-4" />
+
+                    {/* AGENDA RAPAT */}
+                    <div className="mb-6">
+                      <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
+                        Agenda Rapat
+                      </h3>
+                      <div className="text-xs md:text-sm space-y-2 pl-2">
+                        {docMetadata.agendaContent.map((point, index) => {
+                          // Check if it matches opening sentences or numeric points
+                          const isHeading = point.includes("Rapat dibuka") || point.includes("Selanjutnya rapat dipimpin");
+                          return (
+                            <p key={index} className={`${isHeading ? "" : "pl-4"} text-stone-900`}>
+                              {point}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <hr className="border-t border-stone-800 my-4" />
+
+                    {/* KESIMPULAN RAPAT */}
+                    <div className="mb-6">
+                      <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
+                        Kesimpulan / Keputusan Rapat
+                      </h3>
+                      <div className="text-xs md:text-sm space-y-2 pl-2">
+                        {docMetadata.kesimpulanContent.map((point, index) => {
+                          const isClosing = point.includes("rapat menutup") || point.includes("ALHAMDULILLAHI");
+                          return (
+                            <p key={index} className={`${isClosing ? "" : "pl-4"} text-stone-900`}>
+                              {point}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <hr className="border-t border-stone-800 my-5" />
+
+                    {/* SIGNATURES SECTION */}
+                    <div className="text-xs md:text-sm">
+                      <p className="mb-4">Mengetahui,</p>
+                      <div className="grid grid-cols-2 gap-8 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="font-bold">Pimpinan Rapat</span>
+                          <span className="mt-16 font-bold">{docMetadata.pimpinan.split(" (")[0]}</span>
+                          <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="font-bold">Notulen Rapat</span>
+                          <span className="mt-16 font-bold">Notulen Pengadilan</span>
+                          <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                /* Empty / Idle State */
-                <div className="text-center py-16 max-w-sm mx-auto flex flex-col items-center font-sans">
-                  <div className="bg-stone-100 p-4.5 rounded-full text-stone-400 mb-4 border border-stone-200">
-                    <Scale className="h-10 w-10 text-stone-400" />
+                ) : (
+                  /* Empty / Idle State */
+                  <div className="text-center py-16 max-w-sm mx-auto flex flex-col items-center font-sans">
+                    <div className="bg-stone-100 p-4.5 rounded-full text-stone-400 mb-4 border border-stone-200">
+                      <Scale className="h-10 w-10 text-stone-400" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-stone-800">Pratinjau Hasil Kosong</h3>
+                    <p className="text-stone-500 text-xs mt-2 leading-relaxed">
+                      Silakan unggah draf rekaman dinas atau lakukan perekaman suara secara langsung untuk memulai penyusunan Notulensi Rapat Otomatis.
+                    </p>
                   </div>
-                  <h3 className="text-sm font-semibold text-stone-800">Pratinjau Hasil Kosong</h3>
-                  <p className="text-stone-500 text-xs mt-2 leading-relaxed">
-                    Silakan unggah draf rekaman dinas atau lakukan perekaman suara secara langsung untuk memulai penyusunan Notulensi Rapat Otomatis.
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
+
+            {/* Ringkasan Eksekutif AI Card */}
+            {resultMarkdown && executiveSummary && (
+              <div className="w-full xl:w-80 shrink-0 flex flex-col gap-4 self-stretch">
+                <div className="bg-white rounded-xl shadow-sm border border-stone-200 border-t-4 border-[#d4af37] p-5 sticky top-6">
+                  <div className="flex items-center gap-2.5 pb-3 mb-4 border-b border-stone-100">
+                    <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-100">
+                      <Wand2 className="h-4.5 w-4.5 text-emerald-700" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                        Ringkasan Eksekutif
+                      </h4>
+                      <p className="text-[10px] text-stone-500 font-sans">
+                        3 Keputusan Utama Rapat
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {executiveSummary.map((point, index) => (
+                      <div key={index} className="flex gap-3 items-start group">
+                        <span className="flex-shrink-0 h-5 w-5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center text-[10px] font-bold font-mono">
+                          {index + 1}
+                        </span>
+                        <p className="text-stone-700 text-xs leading-relaxed font-sans font-medium">
+                          {point}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="mt-5 pt-4 border-t border-stone-100 flex items-center justify-between text-[10px] text-stone-400 font-sans font-medium">
+                    <span>Sistem Otomatis</span>
+                    <span>EYD V Terverifikasi</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </main>
