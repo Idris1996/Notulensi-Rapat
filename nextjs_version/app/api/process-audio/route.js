@@ -8,108 +8,116 @@ export async function POST(request) {
     let mimeType = "";
     let base64Data = "";
     let notes = "";
+    let isTextOnly = false;
+    let summaryPoints = "";
 
     if (contentType.includes("application/json")) {
       const body = await request.json();
+      isTextOnly = body.isTextOnly === "true" || body.isTextOnly === true;
+      summaryPoints = body.summaryPoints || "";
       fileUri = body.fileUri;
       mimeType = body.mimeType;
       notes = body.notes || body.realtimeTranscript || "";
     } else {
       const formData = await request.formData();
-      const audioFile = formData.get("file") || formData.get("audio");
+      isTextOnly = formData.get("isTextOnly") === "true" || formData.get("isTextOnly") === true;
+      summaryPoints = formData.get("summaryPoints") || "";
       notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
 
-      if (!audioFile) {
-        return NextResponse.json(
-          { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
-          { status: 400 }
-        );
-      }
+      if (!isTextOnly) {
+        const audioFile = formData.get("file") || formData.get("audio");
+        if (!audioFile) {
+          return NextResponse.json(
+            { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
+            { status: 400 }
+          );
+        }
 
-      // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
-      if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
-        return NextResponse.json(
-          { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
-          { status: 400 }
-        );
-      }
+        // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
+        if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
+          return NextResponse.json(
+            { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
+            { status: 400 }
+          );
+        }
 
-      // Ambil bytes dari file audio
-      const bytes = await audioFile.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-      mimeType = audioFile.type || "audio/webm";
+        // Ambil bytes dari file audio
+        const bytes = await audioFile.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        mimeType = audioFile.type || "audio/webm";
 
-      if (mimeType.includes(";")) {
-        mimeType = mimeType.split(";")[0].trim();
-      }
-      if (mimeType === "video/webm") {
-        mimeType = "audio/webm";
-      }
+        if (mimeType.includes(";")) {
+          mimeType = mimeType.split(";")[0].trim();
+        }
+        if (mimeType === "video/webm") {
+          mimeType = "audio/webm";
+        }
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return NextResponse.json(
-          { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
-          { status: 500 }
-        );
-      }
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          return NextResponse.json(
+            { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
+            { status: 500 }
+          );
+        }
 
-      // Jika file lebih besar dari 4MB, upload server-side ke Gemini File API
-      if (buffer.length > 4 * 1024 * 1024) {
-        console.log(`[NextJS] Server-side uploading file (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
-        const startRes = await fetch(
-          `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: {
-              "X-Goog-Upload-Protocol": "resumable",
-              "X-Goog-Upload-Command": "start",
-              "X-Goog-Upload-Header-Content-Length": buffer.length.toString(),
-              "X-Goog-Upload-Header-Content-Type": mimeType,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              file: {
-                displayName: audioFile.name || "rekaman_rapat.webm",
+        // Jika file lebih besar dari 4MB, upload server-side ke Gemini File API
+        if (buffer.length > 4 * 1024 * 1024) {
+          console.log(`[NextJS] Server-side uploading file (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
+          const startRes = await fetch(
+            `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: {
+                "X-Goog-Upload-Protocol": "resumable",
+                "X-Goog-Upload-Command": "start",
+                "X-Goog-Upload-Header-Content-Length": buffer.length.toString(),
+                "X-Goog-Upload-Header-Content-Type": mimeType,
+                "Content-Type": "application/json",
               },
-            }),
+              body: JSON.stringify({
+                file: {
+                  displayName: audioFile.name || "rekaman_rapat.webm",
+                },
+              }),
+            }
+          );
+
+          if (!startRes.ok) {
+            throw new Error(`Gagal menginisialisasi upload server ke Google: ${await startRes.text()}`);
           }
-        );
 
-        if (!startRes.ok) {
-          throw new Error(`Gagal menginisialisasi upload server ke Google: ${await startRes.text()}`);
-        }
+          const uploadUrl = startRes.headers.get("x-goog-upload-url");
+          if (!uploadUrl) {
+            throw new Error("Google tidak mengembalikan header x-goog-upload-url.");
+          }
 
-        const uploadUrl = startRes.headers.get("x-goog-upload-url");
-        if (!uploadUrl) {
-          throw new Error("Google tidak mengembalikan header x-goog-upload-url.");
-        }
+          const uploadRes = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: {
+              "X-Goog-Upload-Offset": "0",
+              "X-Goog-Upload-Command": "upload, finalize",
+              "Content-Type": mimeType,
+            },
+            body: buffer,
+          });
 
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            "X-Goog-Upload-Offset": "0",
-            "X-Goog-Upload-Command": "upload, finalize",
-            "Content-Type": mimeType,
-          },
-          body: buffer,
-        });
+          if (!uploadRes.ok) {
+            throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
+          }
 
-        if (!uploadRes.ok) {
-          throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
+          const uploadResult = await uploadRes.json();
+          fileUri = uploadResult.uri || uploadResult.file?.uri || "";
+          if (!fileUri && uploadResult.name) {
+            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+          }
+          if (!fileUri && uploadResult.file?.name) {
+            fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+          }
+          console.log(`[NextJS] Server-side upload complete. fileUri: ${fileUri}`);
+        } else {
+          base64Data = buffer.toString("base64");
         }
-
-        const uploadResult = await uploadRes.json();
-        fileUri = uploadResult.uri || uploadResult.file?.uri || "";
-        if (!fileUri && uploadResult.name) {
-          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
-        }
-        if (!fileUri && uploadResult.file?.name) {
-          fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
-        }
-        console.log(`[NextJS] Server-side upload complete. fileUri: ${fileUri}`);
-      } else {
-        base64Data = buffer.toString("base64");
       }
     }
 
@@ -125,7 +133,7 @@ export async function POST(request) {
     const genAI = new GoogleGenerativeAI(apiKey);
 
     // Polling loop to wait for the file to become ACTIVE on Google's servers if a fileUri is provided
-    if (fileUri) {
+    if (!isTextOnly && fileUri) {
       const fileId = fileUri.split("/").pop(); // extract the id, e.g. "abc123xyz"
       const getFileUrl = `https://generativelanguage.googleapis.com/v1beta/files/${fileId}?key=${apiKey}`;
       
@@ -167,13 +175,70 @@ export async function POST(request) {
       }
     }
 
-    const systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
+    let systemInstruction = "";
+    if (isTextOnly) {
+      systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas resmi yang SANGAT DETAIL, LENGKAP, FORMAL, dan PRESISI berdasarkan draf kasar/point-point rangkuman rapat yang disediakan oleh pengguna.
 
-ATURAN KETAT (ANTI-HALUSINASI):
+Tugas Anda adalah:
+1. Mengubah draf kasar/point-point rangkuman rapat kasar yang terkesan informal atau singkat menjadi format tata naskah dinas resmi Mahkamah Agung (Pengadilan Agama Paniai) yang baku, formal, dan rapi sesuai Pedoman Tata Naskah Dinas Mahkamah Agung.
+2. Jangan kurangi detail atau kesimpulan penting apa pun dari draf kasar/point-point rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
+3. Gunakan gaya bahasa dinas formal (EYD V) untuk merangkum dan menguraikan draf rapat tersebut.
+4. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan. Setiap poin pembahasan, usulan, instruksi, masukan, kendala, dan tanggapan dari sub-bagian yang disebutkan di catatan kasar harus diuraikan secara RINCI, LENGKAP, dan JELAS.
+
+Berikut adalah draf kasar/point-point rangkuman rapat yang disediakan pengguna:
+"""
+${summaryPoints}
+"""
+
+Hasilkan output menggunakan format Markdown berikut:
+
+MAHKAMAH AGUNG REPUBLIK INDONESIA
+DIREKTORAT JENDERAL BADAN PERADILAN AGAMA
+PENGADILAN TINGGI AGAMA JAYAPURA
+PENGADILAN AGAMA PANIAI
+Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+================================================================================
+
+                                NOTULEN RAPAT
+
+| Kode Dokumen | Tgl. Pembuatan | Tgl. Revisi | Tgl. Efektif |
+| :--- | :--- | :--- | :--- |
+| FM/AM/04/02 | 02/05/2018 | ..................... | 02/05/2018 |
+
+Hari/Tanggal/Jam : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Tempat           : Ruang Rapat Pengadilan Agama Paniai
+Pimpinan Rapat   : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Peserta Rapat    : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan] Orang
+
+--------------------------------------------------------------------------------
+                                 Agenda Rapat
+--------------------------------------------------------------------------------
+Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
+Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang disebutkan di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun.]
+
+Selanjutnya kesimpulan rapat sebagai berikut:
+[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail.]
+
+Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
+
+--------------------------------------------------------------------------------
+Mengetahui,
+Pimpinan Rapat                                        Notulen Rapat
+
+
+[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
+    } else {
+      systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT, SANGAT DETAIL, LENGKAP, dan FAKTUAL berdasarkan seluruh isi file audio yang diunggah.
+
+ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
 1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio.
 2. JANGAN PERNAH menambahkan asumsi, kesimpulan logis sendiri, atau mengarang cerita/agenda yang tidak ada di dalam audio.
 3. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
 4. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
+5. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan (jangan terlalu sedikit atau terlalu singkat). Setiap pembahasan, setiap usulan, setiap instruksi, setiap masukan, setiap kendala, dan setiap tanggapan dari masing-masing pembicara atau perwakilan sub-bagian (Kepegawaian, Umum & Keuangan, Perencanaan, TI, Pelaporan, Kepaniteraan, dll.) harus dituliskan secara RINCI dan LENGKAP. Jabarkan seluruh pokok pikiran mereka ke dalam poin-poin yang komprehensif, padat informasi, dan mencakup semua detail penting yang diucapkan dari awal hingga akhir rekaman rapat.
 
 Hasilkan output menggunakan format Markdown berikut:
 
@@ -201,10 +266,10 @@ Peserta Rapat    : [Isi jumlah peserta] Orang
 --------------------------------------------------------------------------------
 Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
 Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
-[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di audio secara berurutan. Jika tidak ada pembahasan sub bagian tertentu, jangan dikarang, cukup lewatkan.]
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di audio secara berurutan. Uraikan poin-poin tersebut dengan SANGAT DETAIL, LENGKAP, dan KOMPREHENSIF sesuai seluruh pokok pembicaraan yang terekam. Jangan ringkas terlalu pendek. Jika sub bagian tertentu berbicara banyak hal, catat seluruh pokok bahasannya secara terperinci.]
 
 Selanjutnya kesimpulan rapat sebagai berikut:
-[Daftar kesimpulan resmi yang disepakati pembicara di dalam audio. Jika tidak ada keputusan eksplisit, tulis: "Tidak ada keputusan spesifik yang disebutkan".]
+[Daftar kesimpulan resmi dan keputusan-keputusan penting yang disepakati pembicara di dalam audio secara detail. Jika tidak ada keputusan eksplisit, tulis: "Tidak ada keputusan spesifik yang disebutkan".]
 
 Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
 
@@ -215,14 +280,18 @@ Pimpinan Rapat                                        Notulen Rapat
 
 [Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
 NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
+    }
 
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
       systemInstruction: systemInstruction,
     });
 
-    let finalPrompt = "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
-    if (notes && notes.trim().length > 0) {
+    let finalPrompt = isTextOnly 
+      ? "Susun draf notulensi rapat dinas resmi yang sangat detail, formal, dan lengkap berdasarkan draf kasar/point-point rangkuman rapat yang disediakan di atas."
+      : "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
+
+    if (!isTextOnly && notes && notes.trim().length > 0) {
       finalPrompt += `
 
 === CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===
@@ -232,20 +301,22 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
     }
 
     let contents = [];
-    if (fileUri) {
-      contents.push({
-        fileData: {
-          fileUri: fileUri,
-          mimeType: mimeType,
-        },
-      });
-    } else {
-      contents.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data,
-        },
-      });
+    if (!isTextOnly) {
+      if (fileUri) {
+        contents.push({
+          fileData: {
+            fileUri: fileUri,
+            mimeType: mimeType,
+          },
+        });
+      } else {
+        contents.push({
+          inlineData: {
+            mimeType: mimeType,
+            data: base64Data,
+          },
+        });
+      }
     }
     contents.push({
       text: finalPrompt,

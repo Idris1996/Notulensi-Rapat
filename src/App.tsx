@@ -20,8 +20,12 @@ import {
 } from "lucide-react";
 
 export default function App() {
-  // Input Method: 'upload' or 'record'
-  const [inputMethod, setInputMethod] = useState<"upload" | "record">("upload");
+  // Input Method: 'upload' or 'record' or 'points'
+  const [inputMethod, setInputMethod] = useState<"upload" | "record" | "points">("upload");
+
+  // Summary Points State
+  const [summaryPoints, setSummaryPoints] = useState<string>("");
+  const summaryFileInputRef = useRef<HTMLInputElement>(null);
 
   // File Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -91,7 +95,37 @@ export default function App() {
     setIsDragging(false);
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      validateAndSetFile(files[0]);
+      if (inputMethod === "points") {
+        readAndSetSummaryFile(files[0]);
+      } else {
+        validateAndSetFile(files[0]);
+      }
+    }
+  };
+
+  const readAndSetSummaryFile = (file: File) => {
+    if (file.name.endsWith(".txt") || file.name.endsWith(".md") || file.name.endsWith(".json") || file.name.endsWith(".csv") || file.type.startsWith("text/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        if (text) {
+          setSummaryPoints(text);
+          setError(null);
+        }
+      };
+      reader.onerror = () => {
+        setError("Gagal membaca file teks. Pastikan file tidak rusak.");
+      };
+      reader.readAsText(file);
+    } else {
+      setError("Format file tidak didukung. Silakan pilih file teks/markdown (.txt, .md).");
+    }
+  };
+
+  const handleSummaryFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      readAndSetSummaryFile(files[0]);
     }
   };
 
@@ -235,93 +269,141 @@ export default function App() {
     setInterimTranscript("");
   };
 
-  // Call the backend to process the audio via Gemini API
+  // Call the backend to process the audio or summary points via Gemini API
   const handleProcessAudio = async () => {
-    const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
-    if (!fileToProcess) {
-      setError("Silakan pilih atau rekam audio terlebih dahulu.");
-      return;
+    if (inputMethod === "points") {
+      if (!summaryPoints.trim()) {
+        setError("Silakan isi atau unggah poin-poin rangkuman terlebih dahulu.");
+        return;
+      }
+    } else {
+      const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
+      if (!fileToProcess) {
+        setError("Silakan pilih atau rekam audio terlebih dahulu.");
+        return;
+      }
     }
 
     setIsProcessing(true);
     setError(null);
     setResultMarkdown(null);
     setProgressPercent(0);
-    setProgressMessage("Mempersiapkan berkas audio...");
+    setProgressMessage(inputMethod === "points" ? "Mempersiapkan data rangkuman..." : "Mempersiapkan berkas audio...");
 
     let stepInterval: NodeJS.Timeout | null = null;
     let percentInterval: NodeJS.Timeout | null = null;
 
     try {
-      let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
-      if (mimeType.includes(";")) {
-        mimeType = mimeType.split(";")[0].trim();
-      }
-      if (mimeType === "video/webm") {
-        mimeType = "audio/webm";
-      }
+      let data: any = null;
 
-      setProgressMessage("Mengunggah berkas audio rapat ke server (0%)...");
+      if (inputMethod === "points") {
+        setProgressPercent(20);
+        setProgressMessage("Mengirimkan draf kasar rapat ke server...");
 
-      const data = await new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/process-audio", true);
+        const response = await fetch("/api/process-audio", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            isTextOnly: true,
+            summaryPoints: summaryPoints,
+          }),
+        });
 
-        // Track upload progress
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
-            setProgressPercent(percent);
-            setProgressMessage(`Mengunggah berkas audio rapat ke server (${percent}%)...`);
-          }
-        };
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+        }
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              resolve(JSON.parse(xhr.responseText));
-            } catch (e) {
-              resolve(xhr.responseText);
+        data = await response.json();
+      } else {
+        const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
+        if (!fileToProcess) {
+          throw new Error("Berkas audio tidak ditemukan.");
+        }
+        let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
+        if (mimeType.includes(";")) {
+          mimeType = mimeType.split(";")[0].trim();
+        }
+        if (mimeType === "video/webm") {
+          mimeType = "audio/webm";
+        }
+
+        setProgressMessage("Mengunggah berkas audio rapat ke server (0%)...");
+
+        data = await new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/process-audio", true);
+
+          // Track upload progress
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
+              setProgressPercent(percent);
+              setProgressMessage(`Mengunggah berkas audio rapat ke server (${percent}%)...`);
             }
-          } else {
-            let errorMsg = "Gagal memproses audio rapat.";
-            try {
-              const resJson = JSON.parse(xhr.responseText);
-              errorMsg = resJson.error || errorMsg;
-            } catch (e) {}
-            reject(new Error(errorMsg));
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch (e) {
+                resolve(xhr.responseText);
+              }
+            } else {
+              let errorMsg = "Gagal memproses audio rapat.";
+              try {
+                const resJson = JSON.parse(xhr.responseText);
+                errorMsg = resJson.error || errorMsg;
+              } catch (e) {}
+              reject(new Error(errorMsg));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke server."));
+
+          // Build FormData
+          const formData = new FormData();
+          if (inputMethod === "upload" && selectedFile) {
+            formData.append("audio", selectedFile, selectedFile.name);
+          } else if (inputMethod === "record" && recordedBlob) {
+            formData.append("audio", recordedBlob, "rekaman_langsung.webm");
           }
-        };
 
-        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke server."));
+          if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
+            formData.append("realtimeTranscript", realtimeTranscript);
+          }
 
-        // Build FormData
-        const formData = new FormData();
-        if (inputMethod === "upload" && selectedFile) {
-          formData.append("audio", selectedFile, selectedFile.name);
-        } else if (inputMethod === "record" && recordedBlob) {
-          formData.append("audio", recordedBlob, "rekaman_langsung.webm");
-        }
-
-        if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
-          formData.append("realtimeTranscript", realtimeTranscript);
-        }
-
-        xhr.send(formData);
-      });
+          xhr.send(formData);
+        });
+      }
 
       // After upload finishes, show server-side process messages
       setProgressPercent(65);
-      setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
+      setProgressMessage(
+        inputMethod === "points"
+          ? "Menyusun poin rapat kasar menjadi tata naskah dinas resmi..."
+          : "Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai..."
+      );
 
-      const steps = [
-        "Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...",
-        "Mengirimkan audio ke Gemini 2.5-flash...",
-        "Gemini sedang mentranskripsi percakapan...",
-        "Mengekstrak pimpinan rapat, agenda, dan peserta...",
-        "Merumuskan kesimpulan rapat secara dinas dan formal...",
-        "Menyelesaikan draf notulensi dinas..."
-      ];
+      const steps = inputMethod === "points"
+        ? [
+            "Menerima poin-poin rapat kasar...",
+            "Mengirim data ke Gemini 2.5-flash...",
+            "Menyusun tata naskah dinas resmi Mahkamah Agung...",
+            "Memformulasikan kesimpulan dan keputusan rapat...",
+            "Menyelesaikan draf notulensi dinas..."
+          ]
+        : [
+            "Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...",
+            "Mengirimkan audio ke Gemini 2.5-flash...",
+            "Gemini sedang mentranskripsi percakapan...",
+            "Mengekstrak pimpinan rapat, agenda, dan peserta...",
+            "Merumuskan kesimpulan rapat secara dinas dan formal...",
+            "Menyelesaikan draf notulensi dinas..."
+          ];
 
       let currentStep = 0;
       stepInterval = setInterval(() => {
@@ -338,7 +420,7 @@ export default function App() {
         });
       }, 1000);
 
-      // We already have 'data' from the successful XHR request!
+      // We already have 'data' from the successful XHR or fetch request!
       if (!data || !data.result) {
         throw new Error("Gagal memperoleh hasil notulensi rapat.");
       }
@@ -544,28 +626,42 @@ from docx.oxml.ns import nsdecls, qn
                   setInputMethod("upload");
                   clearAudio();
                 }}
-                className={`flex-1 py-3.5 px-4 text-xs font-semibold border-b-2 flex items-center justify-center gap-2 transition-all ${
+                className={`flex-1 py-3 px-1 text-[11px] font-semibold border-b-2 flex items-center justify-center gap-1.5 transition-all ${
                   inputMethod === "upload"
                     ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
                     : "border-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-100/50"
                 }`}
               >
-                <Upload className="h-4 w-4" />
-                Unggah File Audio
+                <Upload className="h-3.5 w-3.5" />
+                File Audio
               </button>
               <button
                 onClick={() => {
                   setInputMethod("record");
                   clearAudio();
                 }}
-                className={`flex-1 py-3.5 px-4 text-xs font-semibold border-b-2 flex items-center justify-center gap-2 transition-all ${
+                className={`flex-1 py-3 px-1 text-[11px] font-semibold border-b-2 flex items-center justify-center gap-1.5 transition-all ${
                   inputMethod === "record"
                     ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
                     : "border-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-100/50"
                 }`}
               >
-                <Mic className="h-4 w-4" />
+                <Mic className="h-3.5 w-3.5" />
                 Rekam Mikrofon
+              </button>
+              <button
+                onClick={() => {
+                  setInputMethod("points");
+                  clearAudio();
+                }}
+                className={`flex-1 py-3 px-1 text-[11px] font-semibold border-b-2 flex items-center justify-center gap-1.5 transition-all ${
+                  inputMethod === "points"
+                    ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
+                    : "border-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-100/50"
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Poin Rangkuman
               </button>
             </div>
 
@@ -612,7 +708,7 @@ from docx.oxml.ns import nsdecls, qn
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : inputMethod === "record" ? (
                 /* Microphone Recording Container */
                 <div className="flex flex-col items-center justify-center p-5 bg-stone-50/50 border border-stone-200 rounded-xl text-center">
                   {isRecording ? (
@@ -724,6 +820,60 @@ from docx.oxml.ns import nsdecls, qn
                     </div>
                   )}
                 </div>
+              ) : (
+                /* Points Input Container */
+                <div className="flex flex-col gap-4">
+                  {/* Text File Drop Zone / Button */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => summaryFileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                      isDragging
+                        ? "border-emerald-500 bg-emerald-50/50"
+                        : "border-stone-300 hover:border-stone-400 bg-stone-50/50 hover:bg-stone-50"
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      ref={summaryFileInputRef}
+                      onChange={handleSummaryFileChange}
+                      accept=".txt,.md,.json,.csv,text/*"
+                      className="hidden"
+                    />
+                    <FileText className="h-7 w-7 text-stone-500 mb-2" />
+                    <h3 className="text-xs font-semibold text-stone-800">
+                      Unggah Berkas Catatan Rapat (.TXT, .MD)
+                    </h3>
+                    <p className="text-[10px] text-stone-500 mt-1">
+                      Seret & taruh berkas catatan kasar di sini atau klik untuk memilih berkas.
+                    </p>
+                  </div>
+
+                  {/* Manual points input field */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#064e3b] flex items-center justify-between">
+                      <span>Draf Kasar / Poin Rangkuman Rapat:</span>
+                      {summaryPoints && (
+                        <button
+                          onClick={() => setSummaryPoints("")}
+                          className="text-rose-600 hover:text-rose-800 text-[10px] font-bold"
+                        >
+                          Bersihkan Teks
+                        </button>
+                      )}
+                    </label>
+                    <textarea
+                      value={summaryPoints}
+                      onChange={(e) => setSummaryPoints(e.target.value)}
+                      placeholder="Masukkan draf kasar rapat, poin-poin penting, agenda, keputusan, atau ringkasan pembicaraan di sini...
+
+AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung yang sangat detail, formal, dan lengkap sesuai EYD V tanpa ada rincian penting yang terlewat."
+                      className="w-full h-56 text-xs font-sans text-stone-800 leading-relaxed bg-white p-3 border border-stone-200 rounded-xl placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-[#064e3b] resize-none"
+                    />
+                  </div>
+                </div>
               )}
 
               {/* Upload Player (for file source) */}
@@ -748,23 +898,29 @@ from docx.oxml.ns import nsdecls, qn
               )}
 
               {/* Clear action */}
-              {(selectedFile || recordedBlob) && (
+              {((inputMethod === "upload" && selectedFile) || (inputMethod === "record" && recordedBlob) || (inputMethod === "points" && summaryPoints)) && (
                 <button
-                  onClick={clearAudio}
+                  onClick={() => {
+                    if (inputMethod === "points") {
+                      setSummaryPoints("");
+                    } else {
+                      clearAudio();
+                    }
+                  }}
                   disabled={isProcessing}
                   className="mt-4 w-full py-2 border border-rose-200 text-rose-600 hover:bg-rose-50 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                 >
                   <Trash2 className="h-4 w-4" />
-                  Hapus & Reset Audio
+                  Hapus & Reset Input
                 </button>
               )}
 
               {/* Process Button */}
               <button
                 onClick={handleProcessAudio}
-                disabled={isProcessing || (!selectedFile && !recordedBlob)}
+                disabled={isProcessing || (inputMethod === "points" ? !summaryPoints.trim() : (!selectedFile && !recordedBlob))}
                 className={`w-full mt-5 py-3 px-4 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-2.5 transition-all ${
-                  isProcessing || (!selectedFile && !recordedBlob)
+                  isProcessing || (inputMethod === "points" ? !summaryPoints.trim() : (!selectedFile && !recordedBlob))
                     ? "bg-stone-200 text-stone-400 cursor-not-allowed shadow-none"
                     : "bg-[#064e3b] hover:bg-[#043d2e] shadow-lg shadow-emerald-900/20 active:scale-[0.98]"
                 }`}
