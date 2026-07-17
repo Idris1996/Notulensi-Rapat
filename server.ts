@@ -250,26 +250,36 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
 
   // --- HEADER INSTANSI ---
   let hasKopSuratImg = false;
-  try {
-    const kopSuratPath = path.join(process.cwd(), "kop surat.png");
-    if (fs.existsSync(kopSuratPath)) {
-      const stats = fs.statSync(kopSuratPath);
-      if (stats.size > 0) {
-        hasKopSuratImg = true;
+  let finalKopSuratPath = "";
+  const possiblePaths = [
+    path.join(process.cwd(), "kop surat.png"),
+    path.join(__dirname, "..", "kop surat.png"),
+    path.join(__dirname, "kop surat.png"),
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const stats = fs.statSync(p);
+        if (stats.size > 0) {
+          hasKopSuratImg = true;
+          finalKopSuratPath = p;
+          break;
+        }
       }
+    } catch (err) {
+      console.error(`Gagal memeriksa path ${p}:`, err);
     }
-  } catch (err) {
-    console.error("Gagal memeriksa kop surat.png untuk DOCX:", err);
   }
 
-  if (hasKopSuratImg) {
+  if (hasKopSuratImg && finalKopSuratPath) {
     try {
       children.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
           children: [
             new ImageRun({
-              data: fs.readFileSync(path.join(process.cwd(), "kop surat.png")),
+              data: fs.readFileSync(finalKopSuratPath),
               transformation: {
                 width: 600, // 600px wide
                 height: 110, // Proportional height

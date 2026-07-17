@@ -52,7 +52,8 @@ function createStyledCell(text: string, isHeader = false, widthPct = 25): TableC
 // Function to convert Markdown to a professional DOCX Document
 async function generateDocxBuffer(markdown: string): Promise<Buffer> {
   // Parse the markdown lines and extract details
-  const lines = markdown.split("\n");
+  const cleanMd = markdown.replace(/\*/g, "");
+  const lines = cleanMd.split("\n");
 
   // Default values
   let pimpinanRapat = "Pimpinan Rapat/Ketua";
@@ -74,25 +75,33 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
       tempat = trimmed.split(":")[1]?.trim() || tempat;
     } else if (trimmed.startsWith("Pimpinan Rapat")) {
       pimpinanRapat = trimmed.split(":")[1]?.trim() || pimpinanRapat;
+    } else if (trimmed.includes("NIP.") || trimmed.toLowerCase().includes("nip")) {
+      // Try to find NIPs
+      const match = trimmed.match(/NIP\.\s*([\d\s\.\-]+)/gi);
+      if (match) {
+        // Just extract the numeric/text part
+        // We'll parse signature names and NIPs in a separate pass or keep them default
+      }
     }
 
     // Capture sections
     if (trimmed.toLowerCase().includes("agenda rapat")) {
       state = "agenda";
       continue;
-    } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut")) {
+    } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut") || trimmed.toLowerCase().includes("kesimpulan / keputusan")) {
       state = "kesimpulan";
       continue;
-    } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui")) {
+    } else if (trimmed.toLowerCase().includes("mengetahui") || (trimmed.toLowerCase().includes("pimpinan rapat") && trimmed.toLowerCase().includes("notulen rapat"))) {
       state = "none";
     }
 
+    const isDivider = /^[=\-\s|_:|…]*$/.test(trimmed) || trimmed === "";
     if (state === "agenda") {
-      if (trimmed && !trimmed.toLowerCase().includes("agenda rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
+      if (trimmed && !isDivider && !trimmed.toLowerCase().includes("agenda rapat")) {
         agendaRows.push(trimmed);
       }
     } else if (state === "kesimpulan") {
-      if (trimmed && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
+      if (trimmed && !isDivider && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.toLowerCase().includes("kesimpulan / keputusan")) {
         kesimpulanRows.push(trimmed);
       }
     }
@@ -181,26 +190,36 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
 
   // --- HEADER INSTANSI ---
   let hasKopSuratImg = false;
-  try {
-    const kopSuratPath = path.join(process.cwd(), "kop surat.png");
-    if (fs.existsSync(kopSuratPath)) {
-      const stats = fs.statSync(kopSuratPath);
-      if (stats.size > 0) {
-        hasKopSuratImg = true;
+  let finalKopSuratPath = "";
+  const possiblePaths = [
+    path.join(process.cwd(), "kop surat.png"),
+    path.join(__dirname, "..", "kop surat.png"),
+    path.join(__dirname, "kop surat.png"),
+  ];
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const stats = fs.statSync(p);
+        if (stats.size > 0) {
+          hasKopSuratImg = true;
+          finalKopSuratPath = p;
+          break;
+        }
       }
+    } catch (err) {
+      console.error(`Gagal memeriksa path ${p}:`, err);
     }
-  } catch (err) {
-    console.error("Gagal memeriksa kop surat.png untuk DOCX:", err);
   }
 
-  if (hasKopSuratImg) {
+  if (hasKopSuratImg && finalKopSuratPath) {
     try {
       children.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
           children: [
             new ImageRun({
-              data: fs.readFileSync(path.join(process.cwd(), "kop surat.png")),
+              data: fs.readFileSync(finalKopSuratPath),
               transformation: {
                 width: 600, // 600px wide
                 height: 110, // Proportional height

@@ -1,6 +1,11 @@
 {
   "version": 2,
   "cleanUrls": true,
+  "functions": {
+    "api/*.ts": {
+      "includeFiles": "kop surat.png"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
