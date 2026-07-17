@@ -141,19 +141,20 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
     if (trimmed.toLowerCase().includes("agenda rapat")) {
       state = "agenda";
       continue;
-    } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut")) {
+    } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut") || trimmed.toLowerCase().includes("kesimpulan / keputusan")) {
       state = "kesimpulan";
       continue;
-    } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui")) {
+    } else if (trimmed.toLowerCase().includes("mengetahui") || (trimmed.toLowerCase().includes("pimpinan rapat") && trimmed.toLowerCase().includes("notulen rapat"))) {
       state = "none";
     }
 
+    const isDivider = /^[=\-\s|_:|…*]*$/.test(trimmed) || trimmed === "";
     if (state === "agenda") {
-      if (trimmed && !trimmed.toLowerCase().includes("agenda rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
+      if (trimmed && !isDivider && !trimmed.toLowerCase().includes("agenda rapat")) {
         agendaRows.push(trimmed);
       }
     } else if (state === "kesimpulan") {
-      if (trimmed && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
+      if (trimmed && !isDivider && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.toLowerCase().includes("kesimpulan / keputusan")) {
         kesimpulanRows.push(trimmed);
       }
     }
@@ -700,6 +701,8 @@ Tugas Anda adalah:
 2. Jangan kurangi detail atau kesimpulan penting apa pun dari poin-poin rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
 3. Gunakan gaya bahasa dinas formal (EYD V) untuk merangkum dan menguraikan draf rapat tersebut.
 4. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan. Setiap poin pembahasan, usulan, instruksi, masukan, kendala, dan tanggapan dari sub-bagian yang disebutkan di catatan kasar harus diuraikan secara RINCI, LENGKAP, dan JELAS.
+5. JANGAN PERNAH menggunakan karakter asterisk (*) atau double asterisks (**) dalam seluruh hasil teks output Anda, baik untuk menandai bullet point/list maupun cetak tebal (bold). Untuk daftar list, gunakan nomor (1, 2, 3) atau huruf (a, b, c). Untuk cetak tebal/penekanan, gunakan HURUF KAPITAL secara bersih.
+6. PENGGABUNGAN POIN BERULANG: Jika terdapat poin pembahasan, usulan, atau kesimpulan yang berulang, tumpang tindih, atau memiliki makna yang sama dari draf kasar, Anda harus menyatukan dan mengonsolidasikannya menjadi satu poin tunggal yang utuh dan komprehensif. Pilihlah susunan redaksi atau struktur kalimat yang sekiranya paling mengalir, tepat, dan nyambung dengan kalimat-kalimat lainnya di sekitarnya.
 
 Berikut adalah draf kasar/point-point rangkuman rapat yang disediakan pengguna:
 """
@@ -732,10 +735,10 @@ Peserta Rapat    : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak dise
 --------------------------------------------------------------------------------
 Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
 Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
-[Tuliskan poin pembahasan tiap sub bagian/pembicara yang disebutkan di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun.]
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang disebutkan di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun. Gunakan penomoran 1, 2, 3 alih-alih bullet points asterisks.]
 
 Selanjutnya kesimpulan rapat sebagai berikut:
-[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail.]
+[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail. Gunakan penomoran atau huruf alih-alih bullet points asterisks.]
 
 Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
 
@@ -744,8 +747,8 @@ Mengetahui,
 Pimpinan Rapat                                        Notulen Rapat
 
 
-[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
+Ahmad Muhtar, S.H.I                                   Idris Al Basyir, A.Md
+NIP. 198112122009121004                               NIP. 199601112025061004
 `;
     } else {
       promptText = `
@@ -757,6 +760,8 @@ ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
 3. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
 4. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
 5. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan (jangan terlalu sedikit atau terlalu singkat). Setiap pembahasan, setiap usulan, setiap instruksi, setiap masukan, setiap kendala, dan setiap tanggapan dari masing-masing pembicara atau perwakilan sub-bagian (Kepegawaian, Umum & Keuangan, Perencanaan, TI, Pelaporan, Kepaniteraan, dll.) harus dituliskan secara RINCI dan LENGKAP. Jabarkan seluruh pokok pikiran mereka ke dalam poin-poin yang komprehensif, padat informasi, dan mencakup semua detail penting yang diucapkan dari awal hingga akhir rekaman rapat.
+6. JANGAN PERNAH menggunakan karakter asterisk (*) atau double asterisks (**) dalam seluruh hasil teks output Anda, baik untuk menandai bullet point/list maupun cetak tebal (bold). Untuk daftar list, gunakan nomor (1, 2, 3) atau huruf (a, b, c). Untuk cetak tebal/penekanan, gunakan HURUF KAPITAL secara bersih.
+7. PENGGABUNGAN POIN BERULANG: Jika terdapat poin pembahasan, usulan, kendala, atau kesimpulan yang diucapkan berulang kali atau memiliki makna yang sama dalam rekaman, Anda harus menyatukan dan mengonsolidasikannya menjadi satu poin tunggal yang paling lengkap. Pilihlah susunan redaksi atau struktur kalimat yang sekiranya paling mengalir, tepat, dan nyambung dengan kalimat-kalimat lainnya di sekitarnya.
 
 Hasilkan output menggunakan format Markdown berikut:
 
@@ -784,10 +789,10 @@ Peserta Rapat    : [Isi jumlah peserta] Orang
 --------------------------------------------------------------------------------
 Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
 Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
-[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di audio secara berurutan. Jika tidak ada pembahasan sub bagian tertentu, jangan dikarang, cukup lewatkan.]
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di audio secara berurutan. Jika tidak ada pembahasan sub bagian tertentu, jangan dikarang, cukup lewatkan. Gunakan penomoran 1, 2, 3 alih-alih bullet points asterisks.]
 
 Selanjutnya kesimpulan rapat sebagai berikut:
-[Daftar kesimpulan resmi yang disepakati pembicara di dalam audio. Jika tidak ada keputusan eksplisit, tulis: "Tidak ada keputusan spesifik yang disebutkan".]
+[Daftar kesimpulan resmi yang disepakati pembicara di dalam audio. Jika tidak ada keputusan eksplisit, tulis: "Tidak ada keputusan spesifik yang disebutkan". Gunakan penomoran atau huruf alih-alih bullet points asterisks.]
 
 Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
 
@@ -796,8 +801,8 @@ Mengetahui,
 Pimpinan Rapat                                        Notulen Rapat
 
 
-[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
+Ahmad Muhtar, S.H.I                                   Idris Al Basyir, A.Md
+NIP. 198112122009121004                               NIP. 199601112025061004
 `;
     }
 
@@ -856,6 +861,9 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
       throw new Error("Gemini tidak mengembalikan hasil teks. Silakan coba rekam atau unggah ulang.");
     }
 
+    // Hilangkan semua tanda asterisk (*) hasil generate AI sesuai permintaan user
+    notulensiResult = notulensiResult.replace(/\*/g, "");
+
     // Generate Executive Summary (3 bullet points) in Indonesian as a JSON string array
     let executiveSummary: string[] = [];
     try {
@@ -882,7 +890,7 @@ ${notulensiResult}`;
 
       const parsed = JSON.parse(summaryResponse.text?.trim() || "[]");
       if (Array.isArray(parsed) && parsed.length > 0) {
-        executiveSummary = parsed.slice(0, 3);
+        executiveSummary = parsed.slice(0, 3).map((item: string) => item.replace(/\*/g, "").trim());
       }
     } catch (summaryErr) {
       console.error("Gagal menjabarkan Ringkasan Eksekutif AI:", summaryErr);
