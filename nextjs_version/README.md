@@ -33,14 +33,14 @@ Unggah isi folder `/nextjs_version` ini ke dalam repositori GitHub Anda:
 3. Cari repositori `notulensi-pa-paniai` yang telah Anda buat di GitHub, lalu klik **"Import"**.
 
 ### 3. Konfigurasi Environment Variable di Vercel (CRITICAL)
-Sebelum mengklik tombol **"Deploy"**, tambahkan Environment Variable rahasia agar sistem dapat terhubung dengan AI Gemini:
+Sebelum mengklik tombol **"Deploy"**, tambahkan Environment Variable berikut agar frontend dapat terhubung ke backend Render Anda:
 
 1. Pada bagian **"Environment Variables"** di konfigurasi proyek Vercel Anda, masukkan nilai berikut:
-   - **Key**: `GEMINI_API_KEY`
-   - **Value**: *(Masukkan Kunci API Gemini Anda dari Google AI Studio)*
+   - **Key**: `NEXT_PUBLIC_BACKEND_URL`
+   - **Value**: `https://pa-paniai-notulen-backend.onrender.com` *(Masukkan URL Web Service Render Anda)*
 2. Klik **"Add"** untuk mengonfirmasi.
 
-> ⚠️ **Catatan Keamanan**: Kunci API disimpan dengan aman di server Vercel dan tidak akan pernah bocor ke browser pengguna (Client-Side). Semua panggilan API dijembatani melalui server Next.js di `/api/generate`.
+> ⚠️ **Catatan**: Jika `NEXT_PUBLIC_BACKEND_URL` tidak didefinisikan, aplikasi frontend akan mencoba menghubungi endpoint lokal `/api/process-audio` secara default. Namun, untuk menangani berkas berukuran besar (hingga 100MB), pastikan Anda telah memasang URL backend Render tersebut.
 
 ### 4. Deploy!
 1. Klik tombol **"Deploy"** di bagian bawah dashboard Vercel.

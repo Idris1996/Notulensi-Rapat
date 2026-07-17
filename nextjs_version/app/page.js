@@ -12,7 +12,12 @@ import {
   Scale,
   Sparkles,
   Download,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Trash2,
+  FileText,
+  Wand2,
+  CheckCircle2
 } from "lucide-react";
 
 export default function Home() {
@@ -26,6 +31,7 @@ export default function Home() {
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
   const [resultMarkdown, setResultMarkdown] = useState("");
+  const [executiveSummary, setExecutiveSummary] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [recordTime, setRecordTime] = useState(0);
@@ -176,7 +182,16 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  // Fetch API /api/process-audio via relative URL
+  const clearAudio = () => {
+    setSelectedFile(null);
+    setRecordedBlob(null);
+    setRecordedUrl(null);
+    setDetectedDuration(null);
+    setRealtimeTranscript("");
+    setInterimTranscript("");
+  };
+
+  // Fetch API /api/process-audio via Render URL if configured
   const handleProcessAudio = async () => {
     const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
     if (!fileToProcess) {
@@ -187,6 +202,7 @@ export default function Home() {
     setIsProcessing(true);
     setError(null);
     setResultMarkdown("");
+    setExecutiveSummary(null);
     setProgressPercent(5);
     setProgressMessage("Mempersiapkan berkas audio...");
 
@@ -203,14 +219,20 @@ export default function Home() {
 
       setProgressMessage("Mengunggah berkas audio rapat ke peladen (0%)...");
 
+      // Get backend URL from environment or default to local route
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+      const endpoint = backendUrl
+        ? `${backendUrl.replace(/\/$/, "")}/api/process-audio`
+        : "/api/process-audio";
+
       const data = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/process-audio", true);
+        xhr.open("POST", endpoint, true);
 
-        // Track upload progress
+        // Track upload progress for large files (critical on mobile/HP)
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
+            const percent = Math.min(Math.round((event.loaded / event.total) * 60), 58); // Scale upload progress to max 58%
             setProgressPercent(percent);
             setProgressMessage(`Mengunggah berkas audio rapat ke peladen (${percent}%)...`);
           }
@@ -233,7 +255,7 @@ export default function Home() {
           }
         };
 
-        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke peladen."));
+        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat menghubungi backend Render.com. Pastikan backend aktif."));
 
         // Build FormData
         const formData = new FormData();
@@ -244,7 +266,7 @@ export default function Home() {
         }
 
         if (realtimeTranscript) {
-          formData.append("notes", realtimeTranscript);
+          formData.append("realtimeTranscript", realtimeTranscript);
         }
 
         xhr.send(formData);
@@ -276,15 +298,20 @@ export default function Home() {
       }, 1000);
 
       if (!data || !data.result) {
-        throw new Error("Gagal memperoleh hasil notulensi rapat.");
+        throw new Error("Gagal memperoleh hasil notulensi rapat dari peladen.");
       }
 
       setProgressPercent(100);
       setProgressMessage("Penyusunan selesai!");
       setResultMarkdown(data.result);
+      
+      // Update executive summary if present in backend response
+      if (data.executiveSummary) {
+        setExecutiveSummary(data.executiveSummary);
+      }
     } catch (err) {
       console.error(err);
-      setError(err.message || "Terjadi galat koneksi atau kegagalan server.");
+      setError(err.message || "Terjadi galat koneksi atau kegagalan server backend.");
     } finally {
       if (progressTimer) clearInterval(progressTimer);
       setIsProcessing(false);
@@ -310,6 +337,41 @@ export default function Home() {
     document.body.removeChild(link);
   };
 
+  const handleDownloadDocx = async () => {
+    if (!resultMarkdown) return;
+    try {
+      setProgressMessage("Mengekspor file Word .DOCX...");
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+      const endpoint = backendUrl
+        ? `${backendUrl.replace(/\/$/, "")}/api/export-docx`
+        : "/api/export-docx";
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ markdown: resultMarkdown }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Gagal mengekspor dokumen DOCX dari backend.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "Notulensi_PA_Paniai.docx";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error(err);
+      setError("Gagal mengunduh file DOCX: " + err.message);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#fdfcf9] text-stone-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-[#064e3b]">
       {/* HEADER BANNER */}
@@ -330,14 +392,14 @@ export default function Home() {
       </header>
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-6 space-y-6">
+      <main className="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 space-y-6">
         {/* WELCOME INSTRUCTION */}
         <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-4 md:p-5">
           <h2 className="text-sm font-bold text-stone-900 mb-1.5 flex items-center gap-2">
             ⚖️ Notulen Rapat Dinas Profesional
           </h2>
           <p className="text-xs text-stone-500 leading-relaxed">
-            Gunakan perekam suara langsung melalui mikrofon HP/Laptop atau unggah berkas audio rapat untuk menghasilkan draf Notulensi Rapat resmi yang eksat, faktual, dan bebas halusinasi.
+            Gunakan perekam suara langsung melalui mikrofon HP/Laptop atau unggah berkas audio rapat untuk menghasilkan draf Notulensi Rapat resmi yang eksat, faktual, dan bebas halusinasi. File audio diproses di backend eksternal Render.com untuk mendukung ukuran file hingga 100MB.
           </p>
         </div>
 
@@ -481,7 +543,7 @@ export default function Home() {
                         {selectedFile ? selectedFile.name : "Klik atau seret file audio kesini"}
                       </p>
                       <p className="text-[10px] text-stone-400">
-                        Mendukung MP3, WAV, M4A, atau WebM (Maks. 25MB)
+                        Mendukung MP3, WAV, M4A, atau WebM (Hingga 100MB)
                       </p>
                     </div>
                     <input
@@ -508,6 +570,20 @@ export default function Home() {
               </div>
             )}
 
+            {/* RESET INPUT AND FILE TRIGGER */}
+            {((inputMethod === "upload" && selectedFile) || (inputMethod === "record" && recordedBlob)) && (
+              <div className="max-w-md mx-auto mt-3">
+                <button
+                  onClick={clearAudio}
+                  disabled={isProcessing}
+                  className="w-full py-1.5 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Hapus & Reset Input
+                </button>
+              </div>
+            )}
+
             {/* PROCESS TRIGGER */}
             <div className="mt-5 max-w-md mx-auto">
               <button
@@ -531,20 +607,40 @@ export default function Home() {
           </div>
         </div>
 
-        {/* LOADING BOX */}
+        {/* LOADING BOX (HIGHLY VISIBLE ON HP/MOBILE) */}
         {isProcessing && (
-          <div className="p-5 bg-white border border-stone-200 rounded-xl text-center space-y-3">
+          <div className="p-6 bg-white border border-stone-200 rounded-xl text-center space-y-4 max-w-md mx-auto shadow-md">
             <div className="relative mb-2 flex flex-col items-center">
-              <div className="h-14 w-14 rounded-full border-4 border-stone-200 border-t-[#064e3b] animate-spin"></div>
+              {/* Spinner */}
+              <div className="h-16 w-16 rounded-full border-4 border-stone-100 border-t-[#064e3b] animate-spin"></div>
               <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-[#064e3b]">
                 {progressPercent}%
               </span>
             </div>
-            <h3 className="text-xs font-bold text-stone-800">Menyusun Notulensi Pengadilan Agama Paniai</h3>
-            <div className="w-full max-w-xs bg-stone-200 h-2 rounded-full mx-auto overflow-hidden">
-              <div className="bg-[#064e3b] h-full rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
+            <div>
+              <h3 className="text-xs font-bold text-stone-900">Sedang Memproses Notulensi Rapat</h3>
+              <p className="text-[10px] text-stone-400 uppercase tracking-widest mt-0.5">Jangan menutup halaman ini</p>
             </div>
-            <p className="text-[11px] text-stone-500 italic">"{progressMessage}"</p>
+            
+            {/* Real Progress Bar */}
+            <div className="w-full bg-stone-100 h-2.5 rounded-full overflow-hidden border border-stone-200 shadow-inner">
+              <div 
+                className="bg-gradient-to-r from-emerald-600 to-[#064e3b] h-full rounded-full transition-all duration-300" 
+                style={{ width: `${progressPercent}%` }}
+              ></div>
+            </div>
+            
+            {/* Progress Label / State */}
+            <div className="bg-[#fcfbf9] border border-[#d2dfd8] rounded-lg p-3">
+              <p className="text-xs text-[#064e3b] font-semibold italic">"{progressMessage}"</p>
+            </div>
+
+            {/* Mobile Helper Tips */}
+            <div className="text-[10px] text-stone-400 text-left border-t border-stone-100 pt-3 space-y-1">
+              <p className="font-semibold text-stone-500">💡 Tips untuk Pengguna HP:</p>
+              <p>• Pastikan koneksi internet stabil selama upload.</p>
+              <p>• File audio besar (~100MB) mungkin memerlukan waktu 1-3 menit untuk selesai diunggah dan dianalisis.</p>
+            </div>
           </div>
         )}
 
@@ -561,56 +657,111 @@ export default function Home() {
 
         {/* SUCCESS OUTPUT */}
         {resultMarkdown && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
-              <span className="text-[11px] font-bold text-[#064e3b] uppercase tracking-wider flex items-center space-x-1.5">
-                <Sparkles className="h-4 w-4" />
-                <span>Dokumen Notulen Selesai Disusun!</span>
-              </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                <button
-                  onClick={handleCopy}
-                  className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 text-emerald-600" />
-                      <span className="text-emerald-600">Disalin</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5 text-stone-500" />
-                      <span>Salin Hasil</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleDownloadTxt}
-                  className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
-                >
-                  <Download className="h-3.5 w-3.5 text-stone-500" />
-                  <span>Unduh Dokumen</span>
-                </button>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left/Main Column: Paper Document Preview */}
+            <div className="lg:col-span-8 space-y-4 w-full">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <span className="text-[11px] font-bold text-[#064e3b] uppercase tracking-wider flex items-center space-x-1.5">
+                  <Sparkles className="h-4 w-4" />
+                  <span>Dokumen Notulen Selesai Disusun!</span>
+                </span>
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    onClick={handleCopy}
+                    className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        <span className="text-emerald-600">Disalin</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5 text-stone-500" />
+                        <span>Salin Teks</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleDownloadTxt}
+                    className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-stone-500" />
+                    <span>Unduh .TXT</span>
+                  </button>
+                  <button
+                    onClick={handleDownloadDocx}
+                    className="px-3 py-1.5 text-white bg-stone-800 hover:bg-black rounded-lg text-[11px] font-semibold shadow-sm flex items-center space-x-1"
+                  >
+                    <Download className="h-3.5 w-3.5 text-stone-300" />
+                    <span>Unduh .DOCX (Word)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* PAPER PREVIEW */}
+              <div className="bg-white shadow border border-stone-200 rounded-md p-6 md:p-10 font-serif text-stone-800 leading-relaxed w-full mx-auto relative select-text">
+                <div className="text-center border-b-2 border-stone-800 pb-3 mb-4">
+                  <h2 className="text-xs md:text-sm font-bold uppercase">MAHKAMAH AGUNG REPUBLIK INDONESIA</h2>
+                  <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">DIREKTORAT JENDERAL BADAN PERADILAN AGAMA</h3>
+                  <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">PENGADILAN TINGGI AGAMA JAYAPURA</h3>
+                  <h1 className="text-xs md:text-sm font-bold uppercase mt-0.5">PENGADILAN AGAMA PANIAI</h1>
+                  <p className="text-[9px] font-sans text-stone-500 italic mt-1">
+                    Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+                  </p>
+                  <p className="text-[9px] font-sans text-stone-500 italic">
+                    www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+                  </p>
+                </div>
+                <div className="prose prose-stone max-w-none text-xs font-sans whitespace-pre-wrap leading-relaxed">
+                  {resultMarkdown}
+                </div>
               </div>
             </div>
 
-            {/* PAPER PREVIEW */}
-            <div className="bg-white shadow border border-stone-200 rounded-md p-6 md:p-10 font-serif text-stone-800 leading-relaxed max-w-2xl mx-auto">
-              <div className="text-center border-b-2 border-stone-800 pb-3 mb-4">
-                <h2 className="text-xs md:text-sm font-bold uppercase">MAHKAMAH AGUNG REPUBLIK INDONESIA</h2>
-                <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">DIREKTORAT JENDERAL BADAN PERADILAN AGAMA</h3>
-                <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">PENGADILAN TINGGI AGAMA JAYAPURA</h3>
-                <h1 className="text-xs md:text-sm font-bold uppercase mt-0.5">PENGADILAN AGAMA PANIAI</h1>
-                <p className="text-[9px] font-sans text-stone-500 italic mt-1">
-                  Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
-                </p>
-                <p className="text-[9px] font-sans text-stone-500 italic">
-                  www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
-                </p>
-              </div>
-              <div className="prose prose-stone max-w-none text-xs font-sans whitespace-pre-wrap leading-relaxed">
-                {resultMarkdown}
-              </div>
+            {/* Right Column: Ringkasan Eksekutif AI Card */}
+            <div className="lg:col-span-4 w-full">
+              {executiveSummary ? (
+                <div className="bg-white rounded-xl shadow-sm border border-stone-200 border-t-4 border-[#d4af37] p-5 lg:sticky lg:top-6 space-y-4">
+                  <div className="flex items-center gap-2.5 pb-3 mb-2 border-b border-stone-100">
+                    <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-100">
+                      <Wand2 className="h-4.5 w-4.5 text-emerald-700" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                        Ringkasan Eksekutif
+                      </h4>
+                      <p className="text-[10px] text-stone-500 font-sans">
+                        3 Keputusan Utama Rapat
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {executiveSummary.map((point, index) => (
+                      <div key={index} className="flex gap-3 items-start">
+                        <span className="flex-shrink-0 h-5 w-5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center text-[10px] font-bold font-mono">
+                          {index + 1}
+                        </span>
+                        <p className="text-stone-700 text-xs leading-relaxed font-sans font-medium">
+                          {point}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-4 border-t border-stone-100 flex items-center justify-between text-[10px] text-stone-400 font-sans font-medium">
+                    <span>Sistem Otomatis</span>
+                    <span>EYD V Terverifikasi</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 text-center">
+                  <p className="text-xs text-stone-400 italic">
+                    Ringkasan Eksekutif (3 Keputusan Utama) akan ditampilkan di sini setelah dokumen selesai disusun.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
