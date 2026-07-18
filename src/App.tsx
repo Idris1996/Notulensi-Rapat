@@ -16,7 +16,10 @@ import {
   MapPin,
   User,
   Users,
-  Code
+  Code,
+  Key,
+  Eye,
+  EyeOff
 } from "lucide-react";
 
 export default function App() {
@@ -25,6 +28,33 @@ export default function App() {
 
   // Error State declared early to support referencing in API Key handlers
   const [error, setError] = useState<string | null>(null);
+
+  // Custom API Key States
+  const [geminiApiKey, setGeminiApiKey] = useState<string>("");
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [showApiKeyInput, setShowApiKeyInput] = useState<boolean>(false);
+  const [isKeySaved, setIsKeySaved] = useState<boolean>(false);
+
+  // Load API Key from localStorage on Component Mount
+  useEffect(() => {
+    const savedKey = localStorage.getItem("user_gemini_api_key");
+    if (savedKey) {
+      setGeminiApiKey(savedKey);
+      setIsKeySaved(true);
+    }
+  }, []);
+
+  // Save/Update API Key
+  const handleSaveApiKey = () => {
+    if (geminiApiKey.trim()) {
+      localStorage.setItem("user_gemini_api_key", geminiApiKey.trim());
+      setIsKeySaved(true);
+      setError(null);
+    } else {
+      localStorage.removeItem("user_gemini_api_key");
+      setIsKeySaved(false);
+    }
+  };
 
   // Summary Points State
   const [summaryPoints, setSummaryPoints] = useState<string>("");
@@ -300,91 +330,352 @@ export default function App() {
     try {
       let notulensiResult = "";
 
-      if (isTextOnly) {
-        setProgressMessage("Mengirim data catatan rapat ke sistem AI...");
-        setProgressPercent(40);
+      // If file size > 4.2MB or we have a saved API key, we use direct browser processing
+      const fileSizeLimit = 4.2 * 1024 * 1024; // 4.2MB
+      const shouldProcessDirectly = isKeySaved || (!isTextOnly && fileToProcess && fileToProcess.size > fileSizeLimit);
 
-        const response = await fetch("/api/process-audio", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            isTextOnly: true,
-            summaryPoints: summaryPoints,
-          }),
+      if (shouldProcessDirectly) {
+        let apiKeyToUse = geminiApiKey.trim();
+        if (!apiKeyToUse) {
+          throw new Error("Berkas Anda terlalu besar (>4.2MB). Karena batasan serverless hosting Vercel (4.5MB Payload Limit), silakan masukkan Kunci API Gemini Anda dari Google AI Studio di panel 'Keamanan & Kunci API' di bagian bawah halaman untuk memproses berkas besar secara aman langsung dari browser Anda.");
+        }
+
+        setProgressMessage("Mode Zero-Backend: Membaca berkas audio langsung dari browser...");
+        setProgressPercent(15);
+
+        // Convert audio to base64
+        let base64Data = "";
+        let mimeType = "audio/webm";
+        if (!isTextOnly && fileToProcess) {
+          mimeType = fileToProcess.type || "audio/mpeg";
+          if (mimeType.includes(";")) {
+            mimeType = mimeType.split(";")[0].trim();
+          }
+          if (mimeType === "video/webm") {
+            mimeType = "audio/webm";
+          }
+          
+          setProgressMessage("Mengonversi rekaman audio ke biner (Base64)...");
+          setProgressPercent(30);
+          
+          base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const res = reader.result as string;
+              resolve(res.split(",")[1]);
+            };
+            reader.onerror = (e) => reject(new Error("Gagal mengonversi file audio."));
+            reader.readAsDataURL(fileToProcess);
+          });
+        }
+
+        setProgressMessage("Gemini sedang menganalisis suara & menyusun notulen rapat PA Paniai langsung dari Google API...");
+        setProgressPercent(55);
+
+        let systemInstruction = "";
+        if (isTextOnly) {
+          systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas resmi yang SANGAT DETAIL, LENGKAP, FORMAL, dan PRESISI berdasarkan draf kasar/point-point rangkuman rapat yang disediakan oleh pengguna.
+
+Tugas Anda adalah:
+1. Mengubah draf kasar/point-point rangkuman rapat kasar yang terkesan informal atau singkat menjadi format tata naskah dinas resmi Mahkamah Agung (Pengadilan Agama Paniai) yang baku, formal, dan rapi sesuai Pedoman Tata Naskah Dinas Mahkamah Agung.
+2. Jangan kurangi detail atau kesimpulan penting apa pun dari draf kasar/point-point rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
+3. Gunakan gaya bahasa dinas formal (EYD V) untuk merangkum dan menguraikan draf rapat tersebut.
+4. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan. Setiap poin pembahasan, usulan, instruksi, masukan, kendala, dan tanggapan dari sub-bagian yang disebutkan di catatan kasar harus diuraikan secara RINCI, LENGKAP, dan JELAS.
+
+Berikut adalah draf kasar/point-point rangkuman rapat yang disediakan pengguna:
+"""
+${summaryPoints}
+"""
+
+Hasilkan output menggunakan format Markdown berikut:
+
+MAHKAMAH AGUNG REPUBLIK INDONESIA
+DIREKTORAT JENDERAL BADAN PERADILAN AGAMA
+PENGADILAN TINGGI AGAMA JAYAPURA
+PENGADILAN AGAMA PANIAI
+Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+================================================================================
+
+                                NOTULEN RAPAT
+
+| Kode Dokumen | Tgl. Pembuatan | Tgl. Revisi | Tgl. Efektif |
+| :--- | :--- | :--- | :--- |
+| FM/AM/04/02 | 02/05/2018 | ..................... | 02/05/2018 |
+
+Hari/Tanggal/Jam : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Tempat           : Ruang Rapat Pengadilan Agama Paniai
+Pimpinan Rapat   : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan]
+Peserta Rapat    : [Ambil dari draf kasar jika ada, jika tidak tulis: Tidak disebutkan] Orang
+
+--------------------------------------------------------------------------------
+                                 Agenda Rapat
+--------------------------------------------------------------------------------
+Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
+Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang disebutkan di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun.]
+
+Selanjutnya kesimpulan rapat sebagai berikut:
+[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail.]
+
+Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
+
+--------------------------------------------------------------------------------
+Mengetahui,
+Pimpinan Rapat                                        Notulen Rapat
+
+
+[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
+        } else {
+          systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT, SANGAT DETAIL, LENGKAP, dan FAKTUAL berdasarkan seluruh isi file audio yang diunggah.
+
+ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
+1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio.
+2. JANGAN PERNAH menambahkan asumsi, kesimpulan logis sendiri, atau mengarang cerita/agenda yang tidak ada di dalam audio.
+3. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
+4. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
+5. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan (jangan terlalu sedikit atau terlalu singkat). Setiap pembahasan, setiap usulan, setiap instruksi, setiap masukan, setiap kendala, dan setiap tanggapan dari masing-masing pembicara atau perwakilan sub-bagian (Kepegawaian, Umum & Keuangan, Perencanaan, TI, Pelaporan, Kepaniteraan, dll.) harus dituliskan secara RINCI dan LENGKAP. Jabarkan seluruh pokok pikiran mereka ke dalam poin-poin yang komprehensif, padat informasi, dan mencakup semua detail penting yang diucapkan dari awal hingga akhir rekaman rapat.
+
+Hasilkan output menggunakan format Markdown berikut:
+
+MAHKAMAH AGUNG REPUBLIK INDONESIA
+DIREKTORAT JENDERAL BADAN PERADILAN AGAMA
+PENGADILAN TINGGI AGAMA JAYAPURA
+PENGADILAN AGAMA PANIAI
+Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+================================================================================
+
+                                NOTULEN RAPAT
+
+| Kode Dokumen | Tgl. Pembuatan | Tgl. Revisi | Tgl. Efektif |
+| :--- | :--- | :--- | :--- |
+| FM/AM/04/02 | 02/05/2018 | ..................... | 02/05/2018 |
+
+Hari/Tanggal/Jam : [Isi hanya jika ada di audio/perintah user, jika tidak tulis: Tidak disebutkan]
+Tempat           : Ruang Rapat Pengadilan Agama Paniai
+Pimpinan Rapat   : [Isi nama pimpinan dari audio/perintah user]
+Peserta Rapat    : [Isi jumlah peserta] Orang
+
+--------------------------------------------------------------------------------
+                                 Agenda Rapat
+--------------------------------------------------------------------------------
+Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
+Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
+[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di audio secara berurutan. Uraikan poin-poin tersebut dengan SANGAT DETAIL, LENGKAP, dan KOMPREHENSIF sesuai seluruh pokok pembicaraan yang terekam. Jangan ringkas terlalu pendek. Jika sub bagian tertentu berbicara banyak hal, catat seluruh pokok bahasannya secara terperinci.]
+
+Selanjutnya kesimpulan rapat sebagai berikut:
+[Daftar kesimpulan resmi dan keputusan-keputusan penting yang disepakati pembicara di dalam audio secara detail. Jika tidak ada keputusan eksplisit, tulis: "Tidak ada keputusan spesifik yang disebutkan".]
+
+Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
+
+--------------------------------------------------------------------------------
+Mengetahui,
+Pimpinan Rapat                                        Notulen Rapat
+
+
+[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
+        }
+
+        let finalPrompt = isTextOnly 
+          ? "Susun draf notulensi rapat dinas resmi yang sangat detail, formal, dan lengkap berdasarkan draf kasar/point-point rangkuman rapat yang disediakan di atas."
+          : "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
+
+        if (!isTextOnly && realtimeTranscript && realtimeTranscript.trim().length > 0) {
+          finalPrompt += `
+
+=== CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===
+Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text) dari mikrofon browser selama rapat berlangsung. Gunakan teks ini bersama dengan rekaman suara audio di atas untuk memverifikasi detail kata per kata, nama pimpinan, sub-bagian, dan poin rapat yang dibicarakan secara eksak. Pastikan hasil notulensi sangat lengkap dan mencakup semua materi dari awal hingga akhir transkripsi kasar ini, tanpa ada yang dikurangi atau disederhanakan:
+"${realtimeTranscript}"
+=============================================================================`;
+        }
+
+        const parts: any[] = [];
+        if (!isTextOnly && base64Data) {
+          parts.push({
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data,
+            },
+          });
+        }
+        parts.push({
+          text: finalPrompt,
         });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          let parsedError = "";
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyToUse}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              systemInstruction: {
+                parts: [{ text: systemInstruction }],
+              },
+            }),
+          }
+        );
+
+        if (!geminiRes.ok) {
+          const geminiErrText = await geminiRes.text();
+          let geminiParsedError = "";
           try {
-            parsedError = JSON.parse(errText).error;
+            geminiParsedError = JSON.parse(geminiErrText).error?.message;
           } catch(e) {}
-          throw new Error(parsedError || `Gagal menghubungi sistem AI: ${response.statusText}`);
+          throw new Error(geminiParsedError || `Gagal menghubungi Google Gemini API: ${geminiRes.statusText}`);
         }
 
-        const data = await response.json();
-        notulensiResult = data.result || "";
-        if (data.executiveSummary) {
-          setExecutiveSummary(data.executiveSummary);
-        }
-      } else {
-        // --- SECURE SERVER-SIDE AUDIO PROCESSING ARCHITECTURE ---
-        const fileSizeMB = (fileToProcess.size / (1024 * 1024)).toFixed(1);
-        setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB)...`);
-        setProgressPercent(10);
+        const geminiData = await geminiRes.json();
+        notulensiResult = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-        const formData = new FormData();
-        formData.append("audio", fileToProcess, fileToProcess.name || "audio.webm");
-        formData.append("isTextOnly", "false");
-        if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
-          formData.append("realtimeTranscript", realtimeTranscript);
+        if (!notulensiResult) {
+          throw new Error("Model Gemini tidak mengembalikan respon teks. Silakan coba kembali.");
         }
 
-        const data = await new Promise<any>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", "/api/process-audio", true);
-
-          // Track upload progress to our server
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              const percent = Math.min(Math.round((event.loaded / event.total) * 60) + 10, 70); // scale up to 70%
-              setProgressPercent(percent);
-              setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB) (${Math.round((event.loaded / event.total) * 100)}%)...`);
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                resolve(JSON.parse(xhr.responseText));
-              } catch (e) {
-                resolve(xhr.responseText);
-              }
-            } else {
-              let errorMsg = "Gagal memproses audio rapat.";
-              try {
-                const resJson = JSON.parse(xhr.responseText);
-                errorMsg = resJson.error || errorMsg;
-              } catch (e) {}
-              reject(new Error(errorMsg));
-            }
-          };
-
-          xhr.onerror = () => {
-            reject(new Error("Terjadi galat jaringan saat mengunggah berkas ke server."));
-          };
-
-          xhr.send(formData);
-        });
-
-        setProgressMessage("Gemini sedang menganalisis suara & menyusun notulen rapat PA Paniai...");
+        // Direct request for Executive Summary
+        setProgressMessage("Menyusun ringkasan eksekutif 3 keputusan rapat...");
         setProgressPercent(85);
 
-        notulensiResult = data.result || "";
-        if (data.executiveSummary) {
-          setExecutiveSummary(data.executiveSummary);
+        const summaryPrompt = `Berdasarkan hasil notulensi rapat Pengadilan Agama Paniai berikut, sarikan 3 keputusan atau tindakan utama yang paling penting dari rapat tersebut ke dalam tepat 3 poin ringkasan eksekutif (bullet points). 
+Gunakan bahasa Indonesia yang sangat formal, padat, jelas, berwibawa, dan berfokus pada hasil/keputusan tindakan nyata (actionable decisions).
+
+Format output harus berupa JSON array berisi tepat 3 string, contoh:
+[
+  "Menyetujui alokasi anggaran renovasi ruang sidang utama yang akan dimulai pada awal bulan depan.",
+  "Menginstruksikan subbagian Kepegawaian untuk segera menyelesaikan evaluasi kinerja PPNPN paling lambat tanggal 25 bulan ini.",
+  "Menyepakati jadwal rapat koordinasi berkala setiap hari Senin pagi pukul 09:00 WIT untuk memantau progres pelaksanaan program kerja."
+]
+
+Hasil Notulensi Rapat:
+${notulensiResult}`;
+
+        const summaryRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyToUse}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: summaryPrompt }] }],
+              generationConfig: {
+                responseMimeType: "application/json",
+              },
+            }),
+          }
+        );
+
+        let directExecSummary = [
+          "Keputusan rapat dinas resmi Pengadilan Agama Paniai telah berhasil dirumuskan.",
+          "Program kerja masing-masing sub bagian disetujui untuk dilaksanakan sesuai target waktu.",
+          "Meningkatkan koordinasi internal untuk memastikan kelancaran administrasi perkara dinas."
+        ];
+
+        if (summaryRes.ok) {
+          try {
+            const summaryData = await summaryRes.json();
+            const rawJsonText = summaryData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const parsed = JSON.parse(rawJsonText.trim());
+            if (Array.isArray(parsed)) {
+              directExecSummary = parsed.slice(0, 3).map((item: string) => item.replace(/\*/g, "").trim());
+            }
+          } catch (e) {
+            console.error("Gagal parse ringkasan eksekutif secara langsung:", e);
+          }
+        }
+        setExecutiveSummary(directExecSummary);
+      } else {
+        if (isTextOnly) {
+          setProgressMessage("Mengirim data catatan rapat ke sistem AI...");
+          setProgressPercent(40);
+
+          const response = await fetch("/api/process-audio", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              isTextOnly: true,
+              summaryPoints: summaryPoints,
+            }),
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            let parsedError = "";
+            try {
+              parsedError = JSON.parse(errText).error;
+            } catch(e) {}
+            throw new Error(parsedError || `Gagal menghubungi sistem AI: ${response.statusText}`);
+          }
+
+          const data = await response.json();
+          notulensiResult = data.result || "";
+          if (data.executiveSummary) {
+            setExecutiveSummary(data.executiveSummary);
+          }
+        } else {
+          // --- SECURE SERVER-SIDE AUDIO PROCESSING ARCHITECTURE ---
+          const fileSizeMB = (fileToProcess.size / (1024 * 1024)).toFixed(1);
+          setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB)...`);
+          setProgressPercent(10);
+
+          const formData = new FormData();
+          formData.append("audio", fileToProcess, fileToProcess.name || "audio.webm");
+          formData.append("isTextOnly", "false");
+          if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
+            formData.append("realtimeTranscript", realtimeTranscript);
+          }
+
+          const data = await new Promise<any>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "/api/process-audio", true);
+
+            // Track upload progress to our server
+            xhr.upload.onprogress = (event) => {
+              if (event.lengthComputable) {
+                const percent = Math.min(Math.round((event.loaded / event.total) * 60) + 10, 70); // scale up to 70%
+                setProgressPercent(percent);
+                setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB) (${Math.round((event.loaded / event.total) * 100)}%)...`);
+              }
+            };
+
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  resolve(JSON.parse(xhr.responseText));
+                } catch (e) {
+                  resolve(xhr.responseText);
+                }
+              } else {
+                let errorMsg = "Gagal memproses audio rapat.";
+                try {
+                  const resJson = JSON.parse(xhr.responseText);
+                  errorMsg = resJson.error || errorMsg;
+                } catch (e) {}
+                reject(new Error(errorMsg));
+              }
+            };
+
+            xhr.onerror = () => {
+              reject(new Error("Terjadi galat jaringan saat mengunggah berkas ke server."));
+            };
+
+            xhr.send(formData);
+          });
+
+          setProgressMessage("Gemini sedang menganalisis suara & menyusun notulen rapat PA Paniai...");
+          setProgressPercent(85);
+
+          notulensiResult = data.result || "";
+          if (data.executiveSummary) {
+            setExecutiveSummary(data.executiveSummary);
+          }
         }
       }
 
@@ -978,6 +1269,60 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
                 )}
               </button>
             </div>
+          </div>
+
+          {/* API Key Configuration Block */}
+          <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5">
+            <button
+              onClick={() => setShowApiKey(!showApiKey)}
+              className="w-full flex items-center justify-between text-left font-semibold text-stone-900 text-xs md:text-sm"
+            >
+              <span className="flex items-center gap-2">
+                <Key className="h-4 w-4 text-[#064e3b]" />
+                🔐 Pengaturan API Key {isKeySaved && "• Aktif"}
+              </span>
+              <span className="text-stone-400 hover:text-stone-600 font-bold font-mono">
+                {showApiKey ? "[-]" : "[+]"}
+              </span>
+            </button>
+            
+            {showApiKey && (
+              <div className="mt-4 pt-3.5 border-t border-stone-100 flex flex-col gap-3 font-sans">
+                <p className="text-stone-600 text-xs leading-relaxed">
+                  Gunakan Kunci API Gemini Anda dari Google AI Studio sendiri untuk memproses berkas audio besar <strong>&gt;4.5MB (hingga 20MB)</strong> secara langsung dan aman dari browser Anda (Zero-Backend). Kunci Anda disimpan lokal di browser.
+                </p>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showApiKeyInput ? "text" : "password"}
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                      placeholder="Masukkan AI Studio API Key..."
+                      className="w-full text-xs bg-stone-50 border border-stone-300 rounded-lg py-2 pl-3.5 pr-10 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono text-stone-800"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+                      className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600"
+                    >
+                      {showApiKeyInput ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleSaveApiKey}
+                    className="py-2 px-4 bg-[#064e3b] text-white hover:bg-[#043d2e] rounded-lg text-xs font-bold transition-all shadow-sm"
+                  >
+                    Simpan
+                  </button>
+                </div>
+                {isKeySaved && (
+                  <p className="text-emerald-700 text-[10px] font-bold flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Kunci terpasang di browser Anda. Mode Zero-Backend aktif untuk semua pengolahan.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
         </section>
