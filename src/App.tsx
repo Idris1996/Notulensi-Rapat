@@ -506,7 +506,7 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
         });
 
         const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyToUse}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyToUse}`,
           {
             method: "POST",
             headers: {
@@ -555,7 +555,7 @@ Hasil Notulensi Rapat:
 ${notulensiResult}`;
 
         const summaryRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKeyToUse}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyToUse}`,
           {
             method: "POST",
             headers: {

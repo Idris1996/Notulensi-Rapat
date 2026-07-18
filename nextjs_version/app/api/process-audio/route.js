@@ -283,7 +283,7 @@ NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
     }
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-3.5-flash",
+      model: "gemini-1.5-flash",
       systemInstruction: systemInstruction,
     });
 
@@ -333,7 +333,7 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
     let executiveSummary = [];
     try {
       const summaryModel = genAI.getGenerativeModel({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
       });
       const summaryPrompt = `Berdasarkan hasil notulensi rapat Pengadilan Agama Paniai berikut, sarikan 3 keputusan atau tindakan utama yang paling penting dari rapat tersebut ke dalam tepat 3 poin ringkasan eksekutif (bullet points). 
 Gunakan bahasa Indonesia yang sangat formal, padat, jelas, berwibawa, dan berfokus pada hasil/keputusan tindakan nyata (actionable decisions).

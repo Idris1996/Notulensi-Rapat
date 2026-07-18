@@ -453,7 +453,7 @@ with col_input:
         elif audio_bytes is None:
             st.error("Mohon unggah file audio atau lakukan perekaman suara terlebih dahulu.")
         else:
-            with st.spinner("⏳ Sedang memproses audio dengan Gemini AI (gemini-3.5-flash)... Harap tunggu sebentar."):
+            with st.spinner("⏳ Sedang memproses audio dengan Gemini AI (gemini-1.5-flash)... Harap tunggu sebentar."):
                 try:
                     # Inisialisasi Google GenAI SDK resmi
                     client = genai.Client(api_key=api_key)
@@ -518,7 +518,7 @@ Aturan Penting:
 
                     # Kirim audio sebagai bytes menggunakan SDK google-genai
                     response = client.models.generate_content(
-                        model='gemini-3.5-flash',
+                        model='gemini-1.5-flash',
                         contents=[
                             types.Part.from_bytes(
                                 data=audio_bytes,

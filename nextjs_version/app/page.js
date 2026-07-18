@@ -434,7 +434,7 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 
         const genAI = new GoogleGenerativeAI(apiKeyToUse);
         const model = genAI.getGenerativeModel({
-          model: "gemini-3.5-flash",
+          model: "gemini-1.5-flash",
           systemInstruction: systemInstruction,
         });
 
@@ -485,7 +485,7 @@ ${notulensiResult}`;
 
         try {
           const summaryModel = genAI.getGenerativeModel({
-            model: "gemini-3.5-flash",
+            model: "gemini-1.5-flash",
           });
           const sumResult = await summaryModel.generateContent({
             contents: [{ parts: [{ text: summaryPrompt }] }],

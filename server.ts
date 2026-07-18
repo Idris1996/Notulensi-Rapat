@@ -827,13 +827,13 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
 `;
     }
 
-    // Call the Gemini 3.5-flash model using lazy client
+    // Call the Gemini 1.5-flash model using lazy client
     const ai = getGeminiClient();
     let notulensiResult = "";
 
     if (isTextOnly) {
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: [{ text: finalPrompt }],
       });
       notulensiResult = response.text || "";
@@ -859,7 +859,7 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
       });
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: {
           parts: parts,
         },
@@ -891,7 +891,7 @@ Hasil Notulensi Rapat:
 ${notulensiResult}`;
 
       const summaryResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: { text: summaryPrompt },
         config: {
           responseMimeType: "application/json",
