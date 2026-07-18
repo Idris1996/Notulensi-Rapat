@@ -45,7 +45,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build and Static Export with Next.js
         run: npm run build
