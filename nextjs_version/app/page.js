@@ -268,64 +268,28 @@ export default function Home() {
           setExecutiveSummary(data.executiveSummary);
         }
       } else {
-        // --- MULTISTEP RESUMABLE UPLOAD LOGIC FOR AUDIO FILES ---
-        let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
-        if (mimeType.includes(";")) {
-          mimeType = mimeType.split(";")[0].trim();
-        }
-        if (mimeType === "video/webm") {
-          mimeType = "audio/webm";
-        }
-
+        // --- SECURE SERVER-SIDE AUDIO PROCESSING ARCHITECTURE ---
         const fileSizeMB = (fileToProcess.size / (1024 * 1024)).toFixed(1);
+        setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB)...`);
+        setProgressPercent(10);
 
-        // Langkah 1: Inisialisasi metadata resumable upload lewat backend kita (menggunakan API Key server yang aman)
-        setProgressMessage(`Langkah 1/3: Menghubungkan ke Google File API lewat Server (${fileSizeMB} MB)...`);
-        setProgressPercent(15);
-
-        const initResponse = await fetch("/api/get-upload-url", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            fileSize: fileToProcess.size,
-            mimeType: mimeType,
-            displayName: fileToProcess.name || `rekaman_notulen_${Date.now()}.webm`,
-          }),
-        });
-
-        if (!initResponse.ok) {
-          const errText = await initResponse.text();
-          let parsedError = "";
-          try {
-            parsedError = JSON.parse(errText).error;
-          } catch(e) {}
-          throw new Error(parsedError || `Inisialisasi Google File Upload gagal: ${initResponse.statusText}`);
+        const formData = new FormData();
+        formData.append("audio", fileToProcess, fileToProcess.name || "audio.webm");
+        formData.append("isTextOnly", "false");
+        if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
+          formData.append("realtimeTranscript", realtimeTranscript);
         }
 
-        const initData = await initResponse.json();
-        const uploadUrl = initData.uploadUrl;
-        if (!uploadUrl) {
-          throw new Error("Gagal menerima URL upload resumable dari Google API.");
-        }
-
-        // Langkah 2: Unggah file biner asli dari browser langsung ke Google menggunakan PUT (resumable upload)
-        setProgressMessage(`Langkah 2/3: Mengunggah rekaman audio ke Google Cloud (${fileSizeMB}MB)...`);
-        setProgressPercent(25);
-
-        const fileMetadata = await new Promise((resolve, reject) => {
+        const data = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.open("PUT", uploadUrl, true);
-          xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
-          xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
-          xhr.setRequestHeader("Content-Type", "application/octet-stream");
+          xhr.open("POST", "/api/process-audio", true);
 
+          // Track upload progress to our server
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
-              const percent = Math.min(Math.round((event.loaded / event.total) * 60) + 20, 80); // scale progress between 20% and 80%
+              const percent = Math.min(Math.round((event.loaded / event.total) * 60) + 10, 70); // scale up to 70%
               setProgressPercent(percent);
-              setProgressMessage(`Langkah 2/3: Mengunggah rekaman audio (${fileSizeMB}MB) (${Math.round((event.loaded / event.total) * 100)}%)...`);
+              setProgressMessage(`Mengunggah rekaman audio ke server (${fileSizeMB} MB) (${Math.round((event.loaded / event.total) * 100)}%)...`);
             }
           };
 
@@ -337,52 +301,28 @@ export default function Home() {
                 resolve(xhr.responseText);
               }
             } else {
-              reject(new Error(`Gagal mengunggah data biner audio: ${xhr.statusText} (${xhr.responseText})`));
+              let errorMsg = "Gagal memproses audio rapat.";
+              try {
+                const resJson = JSON.parse(xhr.responseText);
+                errorMsg = resJson.error || errorMsg;
+              } catch (e) {}
+              reject(new Error(errorMsg));
             }
           };
 
           xhr.onerror = () => {
-            reject(new Error("Terjadi galat jaringan saat mengunggah biner ke Google File API."));
+            reject(new Error("Terjadi galat jaringan saat mengunggah berkas ke server."));
           };
 
-          xhr.send(fileToProcess);
+          xhr.send(formData);
         });
 
-        const fileUri = fileMetadata.file?.uri || fileMetadata.uri || "";
-        if (!fileUri) {
-          throw new Error("Gagal memperoleh detail file yang diunggah dari Google.");
-        }
-
-        // Langkah 3: Kirim URI File dan Transkrip Real-Time ke backend untuk diproses oleh Gemini
-        setProgressMessage("Langkah 3/3: Gemini sedang menganalisis suara & menyusun notulen rapat PA Paniai...");
+        setProgressMessage("Gemini sedang menganalisis suara & menyusun notulen rapat PA Paniai...");
         setProgressPercent(85);
 
-        const processResponse = await fetch("/api/process-audio", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            isTextOnly: false,
-            fileUri: fileUri,
-            mimeType: mimeType,
-            realtimeTranscript: realtimeTranscript,
-          }),
-        });
-
-        if (!processResponse.ok) {
-          const errText = await processResponse.text();
-          let parsedError = "";
-          try {
-            parsedError = JSON.parse(errText).error;
-          } catch(e) {}
-          throw new Error(parsedError || `Penyusunan notulen rapat gagal: ${processResponse.statusText}`);
-        }
-
-        const processData = await processResponse.json();
-        notulensiResult = processData.result || "";
-        if (processData.executiveSummary) {
-          setExecutiveSummary(processData.executiveSummary);
+        notulensiResult = data.result || "";
+        if (data.executiveSummary) {
+          setExecutiveSummary(data.executiveSummary);
         }
       }
 
