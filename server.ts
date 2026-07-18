@@ -51,12 +51,25 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // Lazy Initialize Gemini Client
 let aiClient: GoogleGenAI | null = null;
 
-function getGeminiClient(): GoogleGenAI {
+function getGeminiClient(customApiKey?: string): GoogleGenAI {
+  const apiKey = (customApiKey && customApiKey.trim()) || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured in environment or custom key is missing.");
+  }
+
+  // If we have a custom key, always return a fresh instance so we don't cache/leak custom keys
+  if (customApiKey) {
+    return new GoogleGenAI({
+      apiKey: customApiKey.trim(),
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured in environment. Please add it in Settings > Secrets.");
-    }
     aiClient = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -683,9 +696,12 @@ app.post("/api/process-audio", (req, res, next) => {
       }
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({
-        error: "GEMINI_API_KEY tidak dikonfigurasi di environment. Silakan tambahkan di Settings > Secrets.",
+    const customApiKey = req.headers["x-gemini-api-key"] as string;
+    const apiKeyToUse = (customApiKey && customApiKey.trim()) || process.env.GEMINI_API_KEY;
+
+    if (!apiKeyToUse) {
+      return res.status(400).json({
+        error: "Kunci API Gemini tidak ditemukan. Silakan konfigurasi GEMINI_API_KEY di Settings > Secrets atau masukkan Kunci API Anda di panel Keamanan & Kunci API.",
       });
     }
 
@@ -828,7 +844,7 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
     }
 
     // Call the Gemini 1.5-flash model using lazy client
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(apiKeyToUse);
     let notulensiResult = "";
 
     if (isTextOnly) {
