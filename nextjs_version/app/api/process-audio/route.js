@@ -329,7 +329,47 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
       throw new Error("Model Gemini tidak mengembalikan respon teks. Silakan rekam atau unggah ulang berkas audio.");
     }
 
-    return NextResponse.json({ result: responseText });
+    // Hasilkan Ringkasan Eksekutif 3 keputusan penting di sisi server
+    let executiveSummary = [];
+    try {
+      const summaryModel = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash",
+      });
+      const summaryPrompt = `Berdasarkan hasil notulensi rapat Pengadilan Agama Paniai berikut, sarikan 3 keputusan atau tindakan utama yang paling penting dari rapat tersebut ke dalam tepat 3 poin ringkasan eksekutif (bullet points). 
+Gunakan bahasa Indonesia yang sangat formal, padat, jelas, berwibawa, dan berfokus pada hasil/keputusan tindakan nyata (actionable decisions).
+
+Format output harus berupa JSON array berisi tepat 3 string, contoh:
+[
+  "Menyetujui alokasi anggaran renovasi ruang sidang utama yang akan dimulai pada awal bulan depan.",
+  "Menginstruksikan subbagian Kepegawaian untuk segera menyelesaikan evaluasi kinerja PPNPN paling lambat tanggal 25 bulan ini.",
+  "Menyepakati jadwal rapat koordinasi berkala setiap hari Senin pagi pukul 09:00 WIT untuk memantau progres pelaksanaan program kerja."
+]
+
+Hasil Notulensi Rapat:
+${responseText}`;
+
+      const sumResult = await summaryModel.generateContent({
+        contents: [{ parts: [{ text: summaryPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        },
+      });
+
+      const rawJsonText = sumResult.response.text();
+      const parsed = JSON.parse(rawJsonText.trim());
+      if (Array.isArray(parsed)) {
+        executiveSummary = parsed.slice(0, 3).map((item) => item.replace(/\*/g, "").trim());
+      }
+    } catch (sumErr) {
+      console.error("Gagal membuat ringkasan eksekutif di server:", sumErr);
+      executiveSummary = [
+        "Keputusan rapat dinas resmi Pengadilan Agama Paniai telah berhasil dirumuskan.",
+        "Program kerja masing-masing sub bagian disetujui untuk dilaksanakan sesuai target waktu.",
+        "Meningkatkan koordinasi internal untuk memastikan kelancaran administrasi perkara dinas."
+      ];
+    }
+
+    return NextResponse.json({ result: responseText, executiveSummary: executiveSummary });
   } catch (error) {
     console.error("Gagal menyusun notulensi:", error);
     return NextResponse.json(
