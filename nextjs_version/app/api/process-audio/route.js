@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 export async function POST(request) {
   try {
     const contentType = request.headers.get("content-type") || "";
+    const apiKey = (request.headers.get("x-gemini-api-key") || "").trim() || process.env.GEMINI_API_KEY || "";
+    
     let fileUri = "";
     let mimeType = "";
     let base64Data = "";
@@ -53,11 +55,10 @@ export async function POST(request) {
           mimeType = "audio/webm";
         }
 
-        const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
           return NextResponse.json(
-            { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
-            { status: 500 }
+            { error: "Kunci API Gemini belum terpasang. Silakan masukkan Kunci API Gemini Anda di panel 'Keamanan & Kunci API' di bagian bawah halaman." },
+            { status: 400 }
           );
         }
 
@@ -121,11 +122,10 @@ export async function POST(request) {
       }
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
-        { status: 500 }
+        { error: "Kunci API Gemini belum terpasang. Silakan masukkan Kunci API Gemini Anda di panel 'Keamanan & Kunci API' di bagian bawah halaman." },
+        { status: 400 }
       );
     }
 
