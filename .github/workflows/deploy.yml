@@ -47,14 +47,14 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build and Static Export with Next.js
+      - name: Build and Static Export with Vite
         run: npm run build
 
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Next.js static export default folder adalah "out" di dalam working directory
-          path: ./nextjs_version/out
+          # PERBAIKAN: Vite React menghasilkan folder "dist", bukan "out"
+          path: ./nextjs_version/dist
 
       - name: Deploy to GitHub Pages
         id: deployment

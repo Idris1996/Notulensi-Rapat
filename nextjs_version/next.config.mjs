@@ -8,6 +8,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  basePath: '/Notulensi-Rapat',
 
   // CATATAN UNTUK DEPLOYMENT KE SUB-FOLDER REPOSITORY GITHUB PAGES:
   // Jika nama repositori Anda di GitHub bukan 'username.github.io' melainkan sub-folder seperti 'username.github.io/nama-repo',
