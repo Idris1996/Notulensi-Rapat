@@ -109,13 +109,13 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
     if (trimmed.toLowerCase().includes("agenda rapat")) {
       isAgenda = true;
       continue;
-    } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+    } else if (trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
       if (isAgenda) {
         isAgenda = false;
       }
     }
 
-    if (isAgenda) {
+    if (isAgenda && !trimmed.startsWith("---") && !trimmed.startsWith("===")) {
       agendaRows.push(line); // Preserve raw line to keep structure
     }
   }

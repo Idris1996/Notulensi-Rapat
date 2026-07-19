@@ -658,12 +658,12 @@ from docx.oxml.ns import nsdecls, qn
         peserta = trimmed.split(":")[1]?.trim() || peserta;
       } else if (trimmed.toLowerCase().includes("agenda rapat")) {
         isAgenda = true;
-      } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+      } else if (trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
         if (isAgenda) {
           isAgenda = false;
         }
       } else {
-        if (isAgenda) {
+        if (isAgenda && !trimmed.startsWith("---") && !trimmed.startsWith("===")) {
           agendaContent.push(line); // Preserve line to retain line spacing & structure
         }
       }
