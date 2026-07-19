@@ -48,6 +48,65 @@ function parseJsonBody(req: Request): Promise<any> {
   });
 }
 
+// Google Drive helper functions
+function extractGoogleDriveFileId(url: string): string | null {
+  const fileDMatch = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
+  if (fileDMatch && fileDMatch[1]) {
+    return fileDMatch[1];
+  }
+  const idMatch = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+  if (idMatch && idMatch[1]) {
+    return idMatch[1];
+  }
+  const openIdMatch = url.match(/\/open\?id=([a-zA-Z0-9-_]+)/);
+  if (openIdMatch && openIdMatch[1]) {
+    return openIdMatch[1];
+  }
+  if (/^[a-zA-Z0-9-_]{25,50}$/.test(url.trim())) {
+    return url.trim();
+  }
+  return null;
+}
+
+async function downloadGoogleDriveFile(fileId: string): Promise<{ buffer: Buffer; mimeType: string; originalname: string }> {
+  const url = `https://docs.google.com/uc?export=download&id=${fileId}`;
+  let response = await fetch(url);
+  
+  let mime = response.headers.get("content-type") || "";
+  if (mime.includes("text/html")) {
+    const text = await response.text();
+    const confirmMatch = text.match(/confirm=([a-zA-Z0-9-_]+)/);
+    if (confirmMatch) {
+      const confirmToken = confirmMatch[1];
+      const confirmUrl = `https://docs.google.com/uc?export=download&confirm=${confirmToken}&id=${fileId}`;
+      response = await fetch(confirmUrl);
+    } else {
+      throw new Error("Gagal mengunduh berkas. Pastikan tautan Google Drive berstatus Publik (Siapa saja yang memiliki link dapat melihat) dan bukan berupa folder.");
+    }
+  }
+  
+  if (!response.ok) {
+    throw new Error(`Google Drive returned status ${response.status}: ${response.statusText}`);
+  }
+  
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  
+  mime = response.headers.get("content-type") || "audio/mpeg";
+  if (mime.includes("text/html")) {
+    throw new Error("Gagal mengunduh berkas. Pastikan tautan Google Drive berstatus Publik (Siapa saja yang memiliki link dapat melihat) dan bukan berupa folder.");
+  }
+  
+  let originalname = "drive_audio.mp3";
+  const contentDisposition = response.headers.get("content-disposition") || "";
+  const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+  if (filenameMatch) {
+    originalname = filenameMatch[1];
+  }
+  
+  return { buffer, mimeType: mime, originalname };
+}
+
 export default async function handler(req: Request, res: Response) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
@@ -74,14 +133,95 @@ export default async function handler(req: Request, res: Response) {
         const body = await parseJsonBody(req);
         isTextOnly = body.isTextOnly === "true" || body.isTextOnly === true;
         summaryPoints = body.summaryPoints || "";
-        fileUri = body.fileUri || "";
-        mimeType = body.mimeType || "";
         realtimeTranscript = body.realtimeTranscript || "";
+
+        if (!isTextOnly) {
+          const driveUrl = body.driveUrl;
+          if (driveUrl) {
+            const fileId = extractGoogleDriveFileId(driveUrl);
+            if (!fileId) {
+              return res.status(400).json({ error: "Format tautan Google Drive tidak valid. Pastikan tautan lengkap dan benar." });
+            }
+            console.log(`Mengunduh berkas dari Google Drive dengan ID: ${fileId}...`);
+            const driveFile = await downloadGoogleDriveFile(fileId);
+            mimeType = driveFile.mimeType;
+            
+            // Clean mimeType
+            if (mimeType.includes(";")) {
+              mimeType = mimeType.split(";")[0].trim();
+            }
+            if (mimeType === "video/webm") {
+              mimeType = "audio/webm";
+            }
+            
+            // If larger than 4MB, upload to Gemini File API
+            if (driveFile.buffer.length > 4 * 1024 * 1024) {
+              console.log(`Berkas Google Drive berukuran besar (${(driveFile.buffer.length / (1024 * 1024)).toFixed(2)}MB). Mengunggah ke Gemini File API...`);
+              
+              const startRes = await fetch(
+                `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+                {
+                  method: "POST",
+                  headers: {
+                    "X-Goog-Upload-Protocol": "resumable",
+                    "X-Goog-Upload-Command": "start",
+                    "X-Goog-Upload-Header-Content-Length": driveFile.buffer.length.toString(),
+                    "X-Goog-Upload-Header-Content-Type": mimeType,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    file: {
+                      displayName: driveFile.originalname || "rekaman_drive.mp3",
+                    },
+                  }),
+                }
+              );
+
+              if (!startRes.ok) {
+                throw new Error(`Gagal menginisialisasi upload server ke Google: ${await startRes.text()}`);
+              }
+
+              const uploadUrl = startRes.headers.get("x-goog-upload-url");
+              if (!uploadUrl) {
+                throw new Error("Google tidak mengembalikan header x-goog-upload-url.");
+              }
+
+              const uploadRes = await fetch(uploadUrl, {
+                method: "PUT",
+                headers: {
+                  "X-Goog-Upload-Offset": "0",
+                  "X-Goog-Upload-Command": "upload, finalize",
+                  "Content-Type": mimeType,
+                },
+                body: driveFile.buffer,
+              });
+
+              if (!uploadRes.ok) {
+                throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
+              }
+
+              const uploadResult: any = await uploadRes.json();
+              fileUri = uploadResult.uri || uploadResult.file?.uri || "";
+              if (!fileUri && uploadResult.name) {
+                fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
+              }
+              if (!fileUri && uploadResult.file?.name) {
+                fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
+              }
+              console.log(`Upload ke Gemini File API selesai. fileUri: ${fileUri}`);
+            } else {
+              base64Data = driveFile.buffer.toString("base64");
+            }
+          } else {
+            fileUri = body.fileUri || "";
+            mimeType = body.mimeType || "";
+          }
+        }
       } catch (parseErr: any) {
-        return res.status(400).json({ error: `Gagal membaca body JSON: ${parseErr.message}` });
+        return res.status(400).json({ error: `Gagal membaca body JSON atau memproses tautan Drive: ${parseErr.message}` });
       }
-      if (!isTextOnly && !fileUri) {
-        return res.status(400).json({ error: "fileUri wajib disertakan untuk input JSON." });
+      if (!isTextOnly && !fileUri && !base64Data) {
+        return res.status(400).json({ error: "fileUri atau driveUrl wajib disertakan untuk input JSON audio." });
       }
     } else {
       // Run the multer upload middleware

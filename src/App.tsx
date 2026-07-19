@@ -33,6 +33,12 @@ export default function App() {
   const [detectedDuration, setDetectedDuration] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Google Drive State
+  const [uploadSource, setUploadSource] = useState<"file" | "drive">("file");
+  const [driveUrl, setDriveUrl] = useState<string>("");
+  const [isValidatingDrive, setIsValidatingDrive] = useState<boolean>(false);
+  const [driveMetadata, setDriveMetadata] = useState<{ fileName: string; fileSize: string; fileId: string } | null>(null);
+
   // Microphone Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -269,11 +275,46 @@ export default function App() {
     setInterimTranscript("");
   };
 
+  const validateDriveLink = async () => {
+    if (!driveUrl.trim()) return;
+    setIsValidatingDrive(true);
+    setError(null);
+    setDriveMetadata(null);
+    try {
+      const response = await fetch("/api/validate-drive-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driveUrl }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Gagal memverifikasi tautan Google Drive.");
+      }
+      const data = await response.json();
+      if (data.valid) {
+        setDriveMetadata({
+          fileName: data.fileName,
+          fileSize: data.fileSize,
+          fileId: data.fileId,
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || "Tautan Google Drive tidak dapat dibaca. Pastikan tautan dibagikan secara Publik.");
+    } finally {
+      setIsValidatingDrive(false);
+    }
+  };
+
   // Call the backend to process the audio or summary points via Gemini API
   const handleProcessAudio = async () => {
     if (inputMethod === "points") {
       if (!summaryPoints.trim()) {
         setError("Silakan isi atau unggah poin-poin rangkuman terlebih dahulu.");
+        return;
+      }
+    } else if (inputMethod === "upload" && uploadSource === "drive") {
+      if (!driveUrl.trim()) {
+        setError("Silakan masukkan tautan Google Drive terlebih dahulu.");
         return;
       }
     } else {
@@ -317,6 +358,43 @@ export default function App() {
         }
 
         data = await response.json();
+      } else if (inputMethod === "upload" && uploadSource === "drive") {
+        setProgressPercent(20);
+        setProgressMessage("Asisten AI sedang mengunduh berkas rapat dari Google Drive...");
+
+        // Setup a slow growing simulated progress to look alive while download/upload to Gemini finishes
+        let simulatedPercent = 20;
+        const driveProgressInterval = setInterval(() => {
+          if (simulatedPercent < 60) {
+            simulatedPercent += 1;
+            setProgressPercent(simulatedPercent);
+          }
+        }, 1500);
+
+        try {
+          const response = await fetch("/api/process-audio", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              driveUrl: driveUrl,
+              realtimeTranscript: realtimeTranscript,
+            }),
+          });
+
+          clearInterval(driveProgressInterval);
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+          }
+
+          data = await response.json();
+        } catch (fetchErr: any) {
+          clearInterval(driveProgressInterval);
+          throw fetchErr;
+        }
       } else {
         const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
         if (!fileToProcess) {
@@ -668,43 +746,131 @@ from docx.oxml.ns import nsdecls, qn
             {/* Content Area */}
             <div className="p-5">
               {inputMethod === "upload" ? (
-                /* Drag & Drop Upload Container */
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
-                    isDragging
-                      ? "border-emerald-500 bg-emerald-50/50"
-                      : "border-stone-300 hover:border-stone-400 bg-stone-50/50 hover:bg-stone-50"
-                  }`}
-                >
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    accept="audio/*"
-                    className="hidden"
-                  />
-                  <div className="bg-stone-100 p-4 rounded-full mb-3 text-stone-600">
-                    <FileAudio className="h-8 w-8 text-stone-500" />
+                <div className="flex flex-col gap-4">
+                  {/* Sub-tabs for file upload vs drive link */}
+                  <div className="flex gap-2 p-1 bg-stone-100 rounded-lg border border-stone-200">
+                    <button
+                      type="button"
+                      onClick={() => setUploadSource("file")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                        uploadSource === "file"
+                          ? "bg-white text-stone-900 shadow-sm"
+                          : "text-stone-500 hover:text-stone-800"
+                      }`}
+                    >
+                      Unggah Berkas Langsung
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUploadSource("drive")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                        uploadSource === "drive"
+                          ? "bg-white text-[#064e3b] shadow-sm font-bold"
+                          : "text-stone-500 hover:text-stone-800"
+                      }`}
+                    >
+                      Gunakan Link Google Drive
+                    </button>
                   </div>
-                  <h3 className="text-sm font-medium text-stone-800">
-                    {selectedFile ? selectedFile.name : "Pilih atau Seret File Rekaman"}
-                  </h3>
-                  <p className="text-stone-500 text-xs mt-1 max-w-xs">
-                    Mendukung format WAV, MP3, M4A, AAC, dll. Maksimal ukuran file 50MB.
-                  </p>
-                  {selectedFile && (
-                    <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
-                      <span className="text-xs bg-emerald-50 text-emerald-800 font-mono py-1 px-2.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-sm">
-                        <Clock className="h-3.5 w-3.5 text-emerald-600" />
-                        Durasi: {detectedDuration !== null ? formatTime(Math.round(detectedDuration)) : "Mendeteksi..."}
-                      </span>
-                      <span className="text-xs bg-stone-100 text-stone-700 font-mono py-1 px-2.5 rounded-full border border-stone-200 shadow-sm">
-                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
-                      </span>
+
+                  {uploadSource === "drive" ? (
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-[#064e3b]">
+                          Tautan Berkas Google Drive:
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={driveUrl}
+                            onChange={(e) => {
+                              setDriveUrl(e.target.value);
+                              setDriveMetadata(null); // Clear metadata when url changes
+                            }}
+                            placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
+                            className="flex-1 text-xs font-sans text-stone-850 bg-white p-2.5 border border-stone-200 rounded-lg placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={validateDriveLink}
+                            disabled={isValidatingDrive || !driveUrl.trim()}
+                            className="py-2.5 px-3 bg-stone-800 hover:bg-black text-white rounded-lg text-xs font-semibold disabled:opacity-50 flex items-center gap-1 shrink-0 transition-all"
+                          >
+                            {isValidatingDrive ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              "Periksa"
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg text-[11px] leading-relaxed">
+                        💡 <strong>Langkah Mudah Membaca Audio Google Drive:</strong><br/>
+                        1. Unggah rekaman audio rapat Anda ke <strong>Google Drive</strong>.<br/>
+                        2. Klik kanan file tersebut &gt; pilih <strong>Bagikan (Share)</strong>.<br/>
+                        3. Ubah Akses Umum menjadi <strong>"Siapa saja yang memiliki link"</strong> (Anyone with the link can view).<br/>
+                        4. Salin tautan (Copy link) tersebut lalu tempel di atas untuk divalidasi dan dianalisis AI.
+                      </div>
+
+                      {driveMetadata && (
+                        <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-lg flex flex-col gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <FileAudio className="h-5 w-5 text-emerald-600 shrink-0" />
+                            <div className="overflow-hidden">
+                              <span className="text-xs font-bold text-stone-900 block truncate">{driveMetadata.fileName}</span>
+                              <span className="text-[10px] text-stone-500 font-mono">{driveMetadata.fileSize} • Terverifikasi Publik</span>
+                            </div>
+                          </div>
+                          
+                          {/* Play drive file audio natively using our stream route */}
+                          <div className="mt-1">
+                            <span className="text-[10px] text-stone-600 font-bold block mb-1">Pratinjau Suara:</span>
+                            <audio src={`/api/stream-drive?id=${driveMetadata.fileId}`} controls className="w-full h-8" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Drag & Drop Upload Container */
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                        isDragging
+                          ? "border-emerald-500 bg-emerald-50/50"
+                          : "border-stone-300 hover:border-stone-400 bg-stone-50/50 hover:bg-stone-50"
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        accept="audio/*"
+                        className="hidden"
+                      />
+                      <div className="bg-stone-100 p-4 rounded-full mb-3 text-stone-600">
+                        <FileAudio className="h-8 w-8 text-stone-500" />
+                      </div>
+                      <h3 className="text-sm font-medium text-stone-800">
+                        {selectedFile ? selectedFile.name : "Pilih atau Seret File Rekaman"}
+                      </h3>
+                      <p className="text-stone-500 text-xs mt-1 max-w-xs">
+                        Mendukung format WAV, MP3, M4A, AAC, dll. Maksimal ukuran file 50MB.
+                      </p>
+                      {selectedFile && (
+                        <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
+                          <span className="text-xs bg-emerald-50 text-emerald-800 font-mono py-1 px-2.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-sm">
+                            <Clock className="h-3.5 w-3.5 text-emerald-600" />
+                            Durasi: {detectedDuration !== null ? formatTime(Math.round(detectedDuration)) : "Mendeteksi..."}
+                          </span>
+                          <span className="text-xs bg-stone-100 text-stone-700 font-mono py-1 px-2.5 rounded-full border border-stone-200 shadow-sm">
+                            {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
