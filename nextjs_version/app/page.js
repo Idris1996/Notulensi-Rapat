@@ -12,91 +12,23 @@ import {
   Scale,
   Sparkles,
   Download,
-  AlertCircle,
-  Clock,
-  Trash2,
-  FileText,
-  Wand2,
-  FileCode,
-  Key,
-  Eye,
-  EyeOff
+  AlertCircle
 } from "lucide-react";
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  Table,
-  TableRow,
-  TableCell,
-  AlignmentType,
-  WidthType,
-  BorderStyle,
-  ImageRun
-} from "docx";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default function Home() {
-  const [inputMethod, setInputMethod] = useState("record"); // "record" | "upload" | "text"
-  
-  // Custom API Key States
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
-  const [isKeySaved, setIsKeySaved] = useState(false);
-
-  // Load API Key from localStorage on Component Mount
-  useEffect(() => {
-    const savedKey = localStorage.getItem("user_gemini_api_key");
-    if (savedKey) {
-      setGeminiApiKey(savedKey);
-      setIsKeySaved(true);
-    }
-  }, []);
-
-  // Save/Update API Key otomatis saat diketik
-  const handleApiKeyChange = (val) => {
-    setGeminiApiKey(val);
-    const trimmed = val.trim();
-    if (trimmed) {
-      localStorage.setItem("user_gemini_api_key", trimmed);
-      setIsKeySaved(true);
-    } else {
-      localStorage.removeItem("user_gemini_api_key");
-      setIsKeySaved(false);
-    }
-  };
-
-  const handleSaveApiKey = () => {
-    if (geminiApiKey.trim()) {
-      localStorage.setItem("user_gemini_api_key", geminiApiKey.trim());
-      setIsKeySaved(true);
-      setError(null);
-    } else {
-      localStorage.removeItem("user_gemini_api_key");
-      setIsKeySaved(false);
-    }
-  };
-
+  const [inputMethod, setInputMethod] = useState("record");
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState(null);
   const [recordedUrl, setRecordedUrl] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [detectedDuration, setDetectedDuration] = useState(null);
-  const [summaryPoints, setSummaryPoints] = useState(""); // For direct text processing
-  
-  // Core Processing States
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
   const [resultMarkdown, setResultMarkdown] = useState("");
-  const [executiveSummary, setExecutiveSummary] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [recordTime, setRecordTime] = useState(0);
-
-  // Web Speech API States for Real-Time Dictation
   const [useRealtimeSpeech, setUseRealtimeSpeech] = useState(false);
   const [realtimeTranscript, setRealtimeTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -244,315 +176,117 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  const clearAudio = () => {
-    setSelectedFile(null);
-    setRecordedBlob(null);
-    setRecordedUrl(null);
-    setDetectedDuration(null);
-    setRealtimeTranscript("");
-    setInterimTranscript("");
-    setSummaryPoints("");
-  };
-
-  // Core Processing Engine utilizing Google File API and Resumable Upload
+  // Fetch API /api/process-audio via relative URL
   const handleProcessAudio = async () => {
-    const isTextOnly = inputMethod === "text";
     const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
-
-    if (!isTextOnly && !fileToProcess) {
-      setError(
-        inputMethod === "upload"
-          ? "Silakan pilih file audio rapat terlebih dahulu."
-          : "Silakan rekam suara rapat terlebih dahulu."
-      );
-      return;
-    }
-
-    if (isTextOnly && !summaryPoints.trim()) {
-      setError("Silakan masukkan catatan kasar atau draf rapat Anda terlebih dahulu.");
-      return;
-    }
-
-    let apiKeyToUse = geminiApiKey.trim();
-    if (!apiKeyToUse) {
-      setError("Kunci API Gemini diperlukan untuk memproses rapat Anda secara 100% Client-Side. Silakan masukkan Kunci API Gemini Anda (format terbaru diawali 'AQ.') pada panel 'Pengaturan API Key' di bawah.");
-      // Open API Key panel if it was closed
-      setShowApiKey(true);
+    if (!fileToProcess) {
+      setError(inputMethod === "upload" ? "Silakan pilih file audio rapat terlebih dahulu." : "Silakan rekam suara rapat terlebih dahulu.");
       return;
     }
 
     setIsProcessing(true);
     setError(null);
     setResultMarkdown("");
-    setExecutiveSummary(null);
     setProgressPercent(5);
+    setProgressMessage("Mempersiapkan berkas audio...");
+
+    let progressTimer = null;
 
     try {
-      let notulensiResult = "";
-
-      const systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. 
-Tugas Utama Anda: "Buatkan notulen rapat resmi untuk Pengadilan Agama Paniai yang sangat terstruktur (Kop Surat, Metadata Dokumen, Agenda Pembahasan per Sub-Bagian, Kesimpulan, dan Lembar Tanda Tangan). Hasil harus objektif, faktual berdasarkan rekaman, dan dilarang keras berhalusinasi."
-
-ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
-1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio / draf kasar.
-2. JANGAN PERNAH menambahkan asumsi, kesimpulan logis sendiri, atau mengarang cerita/agenda yang tidak ada.
-3. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
-4. SANGAT PENTING (KUNCI UTAMA): Setiap pembahasan, setiap usulan, setiap instruksi, setiap masukan, setiap kendala, dan setiap tanggapan dari masing-masing pembicara atau perwakilan sub-bagian (Kepegawaian, Umum & Keuangan, Perencanaan, TI, Pelaporan, Kepaniteraan, dll.) harus dituliskan secara RINCI dan LENGKAP. Jabarkan seluruh pokok pikiran mereka ke dalam poin-poin yang komprehensif, padat informasi, dan mencakup semua detail penting dari awal hingga akhir rekaman rapat.
-
-Hasilkan output menggunakan format Markdown berikut:
-
-MAHKAMAH AGUNG REPUBLIK INDONESIA
-DIREKTORAT JENDERAL BADAN PERADILAN AGAMA
-PENGADILAN TINGGI AGAMA JAYAPURA
-PENGADILAN AGAMA PANIAI
-Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
-www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
-================================================================================
-
-                                NOTULEN RAPAT
-
-| Kode Dokumen | Tgl. Pembuatan | Tgl. Revisi | Tgl. Efektif |
-| :--- | :--- | :--- | :--- |
-| FM/AM/04/02 | 02/05/2018 | ..................... | 02/05/2018 |
-
-Hari/Tanggal/Jam : [Isi hanya jika ada di audio/perintah user, jika tidak tulis: Tidak disebutkan]
-Tempat           : Ruang Rapat Pengadilan Agama Paniai
-Pimpinan Rapat   : [Isi nama pimpinan dari audio/perintah user]
-Peserta Rapat    : [Isi jumlah peserta] Orang
-
---------------------------------------------------------------------------------
-                                 Agenda Rapat
---------------------------------------------------------------------------------
-Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim"
-Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian, yaitu:
-[Tuliskan poin pembahasan tiap sub bagian/pembicara yang BENAR-BENAR berbicara di draf kasar secara berurutan. Uraikan dengan sangat profesional, detail, dan lengkap. Jangan kurangi detail apapun.]
-
-Selanjutnya kesimpulan rapat sebagai berikut:
-[Daftar kesimpulan resmi dan keputusan penting yang disepakati pembicara di draf kasar secara detail.]
-
-Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL'ALAMIN"
-
---------------------------------------------------------------------------------
-Mengetahui,
-Pimpinan Rapat                                        Notulen Rapat
-
-
-[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
-
-      if (isTextOnly) {
-        setProgressMessage("1/3: Menyiapkan jalur komunikasi dengan Gemini...");
-        setProgressPercent(20);
-
-        await new Promise((resolve) => setTimeout(resolve, 800));
-
-        setProgressMessage("2/3: Mengirim data draf catatan rapat ke Gemini AI...");
-        setProgressPercent(50);
-
-        const genAI = new GoogleGenerativeAI(apiKeyToUse);
-        const model = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
-          systemInstruction: systemInstruction,
-        });
-
-        const promptText = `Berikut adalah draf kasar/point-point rangkuman rapat yang disediakan pengguna:
-"""
-${summaryPoints}
-"""
-
-Susun draf notulensi rapat dinas resmi yang sangat detail, formal, dan lengkap berdasarkan draf kasar/point-point rangkuman rapat yang disediakan di atas.`;
-
-        const result = await model.generateContent([{ text: promptText }]);
-        notulensiResult = result.response.text();
-
-        setProgressMessage("3/3: Gemini AI sedang menyusun ringkasan eksekutif...");
-        setProgressPercent(85);
-      } else {
-        const fileSizeMB = (fileToProcess.size / (1024 * 1024)).toFixed(1);
-        
-        // Tahap 1/3: Menyiapkan jalur
-        setProgressMessage("1/3: Menyiapkan jalur komunikasi aman dengan Google File API...");
-        setProgressPercent(10);
-
-        const startResponse = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKeyToUse}`, {
-          method: "POST",
-          headers: {
-            "X-Goog-Upload-Protocol": "resumable",
-            "X-Goog-Upload-Command": "start",
-            "X-Goog-Upload-Header-Content-Length": fileToProcess.size.toString(),
-            "X-Goog-Upload-Header-Content-Type": fileToProcess.type || "audio/webm",
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            file: {
-              display_name: fileToProcess.name || "audio_meeting"
-            }
-          })
-        });
-
-        if (!startResponse.ok) {
-          const errorText = await startResponse.text();
-          throw new Error(`Gagal memulai sesi unggah ke Google: ${errorText || startResponse.statusText}`);
-        }
-
-        const uploadUrl = startResponse.headers.get("x-goog-upload-url");
-        if (!uploadUrl) {
-          throw new Error("Gagal mendapatkan URL unggahan Google.");
-        }
-
-        // Tahap 2/3: Mengunggah file audio
-        setProgressMessage(`2/3: Mengunggah file audio (${fileSizeMB} MB) ke Google - 0%...`);
-        setProgressPercent(20);
-
-        const uploadedFile = await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("PUT", uploadUrl, true);
-          xhr.setRequestHeader("X-Goog-Upload-Offset", "0");
-          xhr.setRequestHeader("X-Goog-Upload-Command", "upload, finalize");
-
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              const uploadPercent = Math.round((event.loaded / event.total) * 100);
-              const totalPercent = Math.min(Math.round((event.loaded / event.total) * 50) + 20, 70); // scale 20% to 70%
-              setProgressPercent(totalPercent);
-              setProgressMessage(`2/3: Mengunggah file audio (${fileSizeMB} MB) ke Google - ${uploadPercent}%...`);
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                const resJson = JSON.parse(xhr.responseText);
-                resolve(resJson.file);
-              } catch (e) {
-                reject(new Error("Respon unggahan Google bukan format JSON."));
-              }
-            } else {
-              reject(new Error(`Gagal mengunggah biner berkas ke Google: ${xhr.statusText || xhr.status}`));
-            }
-          };
-
-          xhr.onerror = () => {
-            reject(new Error("Terjadi galat jaringan saat mengunggah biner berkas ke Google."));
-          };
-
-          xhr.send(fileToProcess);
-        });
-
-        // Tahap 3/3: Gemini AI sedang menyusun notulen
-        setProgressMessage("3/3: Google File API sedang memverifikasi berkas audio...");
-        setProgressPercent(75);
-
-        const fileUri = uploadedFile.uri;
-        const fileName = uploadedFile.name; // files/abc...
-        
-        let fileActive = false;
-        const stateUrl = `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${apiKeyToUse}`;
-        for (let i = 0; i < 30; i++) {
-          const stateRes = await fetch(stateUrl);
-          if (stateRes.ok) {
-            const stateData = await stateRes.json();
-            if (stateData.state === "ACTIVE") {
-              fileActive = true;
-              break;
-            } else if (stateData.state === "FAILED") {
-              throw new Error("Google memproses berkas audio Anda dengan status GAGAL.");
-            }
-          }
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-
-        if (!fileActive) {
-          throw new Error("Waktu tunggu berkas audio aktif habis di Google File API.");
-        }
-
-        setProgressMessage("3/3: Gemini AI sedang menganalisis suara & menyusun notulen...");
-        setProgressPercent(80);
-
-        const genAI = new GoogleGenerativeAI(apiKeyToUse);
-        const model = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
-          systemInstruction: systemInstruction,
-        });
-
-        let finalPrompt = "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
-        if (realtimeTranscript && realtimeTranscript.trim().length > 0) {
-          finalPrompt += `\n\n=== CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===\nBerikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text) dari mikrofon browser selama rapat berlangsung. Gunakan teks ini bersama dengan rekaman suara audio di atas untuk memverifikasi detail kata per kata, nama pimpinan, sub-bagian, dan poin rapat yang dibicarakan secara eksak. Pastikan hasil notulensi sangat lengkap dan mencakup semua materi dari awal hingga akhir transkripsi kasar ini, tanpa ada yang dikurangi atau disederhanakan:\n"${realtimeTranscript}"\n=============================================================================`;
-        }
-
-        const parts = [
-          {
-            fileData: {
-              mimeType: fileToProcess.type || "audio/webm",
-              fileUri: fileUri
-            }
-          },
-          {
-            text: finalPrompt
-          }
-        ];
-
-        const result = await model.generateContent(parts);
-        notulensiResult = result.response.text();
+      let mimeType = fileToProcess.type || (inputMethod === "record" ? "audio/webm" : "audio/mpeg");
+      if (mimeType.includes(";")) {
+        mimeType = mimeType.split(";")[0].trim();
+      }
+      if (mimeType === "video/webm") {
+        mimeType = "audio/webm";
       }
 
-      if (!notulensiResult) {
-        throw new Error("Gemini tidak mengembalikan hasil teks. Silakan coba kembali.");
-      }
+      setProgressMessage("Mengunggah berkas audio rapat ke peladen (0%)...");
 
-      // Bersihkan karakter asterisks (*) yang mengganggu tata naskah
-      notulensiResult = notulensiResult.replace(/\*/g, "");
-      setResultMarkdown(notulensiResult);
+      const data = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/process-audio", true);
 
-      setProgressMessage("Menyusun ringkasan eksekutif 3 keputusan rapat...");
-      setProgressPercent(90);
+        // Track upload progress
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 60); // Scale upload progress to 60%
+            setProgressPercent(percent);
+            setProgressMessage(`Mengunggah berkas audio rapat ke peladen (${percent}%)...`);
+          }
+        };
 
-      const summaryPrompt = `Berdasarkan hasil notulensi rapat Pengadilan Agama Paniai berikut, sarikan 3 keputusan atau tindakan utama yang paling penting dari rapat tersebut ke dalam tepat 3 poin ringkasan eksekutif (bullet points). 
-Gunakan bahasa Indonesia yang sangat formal, padat, jelas, berwibawa, dan berfokus pada hasil/keputusan tindakan nyata (actionable decisions).
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch (e) {
+              resolve(xhr.responseText);
+            }
+          } else {
+            let errorMsg = "Gagal memproses audio rapat.";
+            try {
+              const resJson = JSON.parse(xhr.responseText);
+              errorMsg = resJson.error || errorMsg;
+            } catch (e) {}
+            reject(new Error(errorMsg));
+          }
+        };
 
-Format output harus berupa JSON array berisi tepat 3 string, contoh:
-[
-  "Menyetujui alokasi anggaran renovasi ruang sidang utama yang akan dimulai pada awal bulan depan.",
-  "Menginstruksikan subbagian Kepegawaian untuk segera menyelesaikan evaluasi kinerja PPNPN paling lambat tanggal 25 bulan ini.",
-  "Menyepakati jadwal rapat koordinasi berkala setiap hari Senin pagi pukul 09:00 WIT untuk memantau progres pelaksanaan program kerja."
-]
+        xhr.onerror = () => reject(new Error("Terjadi galat koneksi jaringan saat mengunggah ke peladen."));
 
-Hasil Notulensi Rapat:
-${notulensiResult}`;
+        // Build FormData
+        const formData = new FormData();
+        if (inputMethod === "upload" && selectedFile) {
+          formData.append("file", selectedFile, selectedFile.name);
+        } else if (inputMethod === "record" && recordedBlob) {
+          formData.append("file", recordedBlob, "rekaman_notulen.webm");
+        }
 
-      let directExecSummary = [
-        "Keputusan rapat dinas resmi Pengadilan Agama Paniai telah berhasil dirumuskan.",
-        "Program kerja masing-masing sub bagian disetujui untuk dilaksanakan sesuai target waktu.",
-        "Meningkatkan koordinasi internal untuk memastikan kelancaran administrasi perkara dinas."
+        if (realtimeTranscript) {
+          formData.append("notes", realtimeTranscript);
+        }
+
+        xhr.send(formData);
+      });
+
+      // After upload finishes, show server-side process messages
+      setProgressPercent(65);
+      setProgressMessage("Menganalisis audio & menyusun tata naskah dinas Pengadilan Agama Paniai...");
+
+      const steps = [
+        "Membaca dan memproses gelombang audio...",
+        "Mentranskripsikan ucapan dan mencocokkan kata...",
+        "Menyusun draf notulensi dinas format PA Paniai...",
+        "Menyelesaikan finalisasi draf..."
       ];
 
-      try {
-        const genAI = new GoogleGenerativeAI(apiKeyToUse);
-        const summaryModel = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
+      let currentStep = 0;
+      progressTimer = setInterval(() => {
+        setProgressPercent((prev) => {
+          if (prev < 98) {
+            if (currentStep < steps.length && prev % 8 === 0) {
+              setProgressMessage(steps[currentStep]);
+              currentStep++;
+            }
+            return prev + 1;
+          }
+          return prev;
         });
-        const sumResult = await summaryModel.generateContent({
-          contents: [{ parts: [{ text: summaryPrompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        });
-        const rawJsonText = sumResult.response.text();
-        const parsed = JSON.parse(rawJsonText.trim());
-        if (Array.isArray(parsed)) {
-          directExecSummary = parsed.slice(0, 3).map((item) => item.replace(/\*/g, "").trim());
-        }
-      } catch (e) {
-        console.error("Gagal parse ringkasan eksekutif secara langsung:", e);
+      }, 1000);
+
+      if (!data || !data.result) {
+        throw new Error("Gagal memperoleh hasil notulensi rapat.");
       }
-      setExecutiveSummary(directExecSummary);
 
       setProgressPercent(100);
       setProgressMessage("Penyusunan selesai!");
+      setResultMarkdown(data.result);
     } catch (err) {
       console.error(err);
-      setError(err.message || "Terjadi galat koneksi atau kegagalan saat memproses berkas.");
+      setError(err.message || "Terjadi galat koneksi atau kegagalan server.");
     } finally {
+      if (progressTimer) clearInterval(progressTimer);
       setIsProcessing(false);
     }
   };
@@ -576,491 +310,34 @@ ${notulensiResult}`;
     document.body.removeChild(link);
   };
 
-  // Pure Client-side styled Word DOCX exporter
-  const handleDownloadDocx = async () => {
-    if (!resultMarkdown) return;
-    try {
-      const lines = resultMarkdown.split("\n");
-
-      let pimpinanRapat = "Pimpinan Rapat/Ketua";
-      let notulenRapat = "Sekretaris/Notulen";
-      let nipPimpinan = ".....................";
-      let nipNotulen = ".....................";
-      let hariTanggalJam = ".....................";
-      let tempat = "Ruang Rapat Pengadilan Agama Paniai";
-      let agendaRows = [];
-      let kesimpulanRows = [];
-      let state = "none";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("Hari/Tanggal/Jam")) {
-          hariTanggalJam = trimmed.split(":")[1]?.trim() || hariTanggalJam;
-        } else if (trimmed.startsWith("Tempat")) {
-          tempat = trimmed.split(":")[1]?.trim() || tempat;
-        } else if (trimmed.startsWith("Pimpinan Rapat")) {
-          pimpinanRapat = trimmed.split(":")[1]?.trim() || pimpinanRapat;
-        }
-
-        if (trimmed.toLowerCase().includes("agenda rapat")) {
-          state = "agenda";
-          continue;
-        } else if (
-          trimmed.toLowerCase().includes("kesimpulan rapat") ||
-          trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut") ||
-          trimmed.toLowerCase().includes("kesimpulan / keputusan")
-        ) {
-          state = "kesimpulan";
-          continue;
-        } else if (
-          trimmed.toLowerCase().includes("mengetahui") ||
-          (trimmed.toLowerCase().includes("pimpinan rapat") && trimmed.toLowerCase().includes("notulen rapat"))
-        ) {
-          state = "none";
-        }
-
-        const isDivider = /^[=\-\s|_:|…*]*$/.test(trimmed) || trimmed === "";
-        if (state === "agenda") {
-          if (trimmed && !isDivider && !trimmed.toLowerCase().includes("agenda rapat")) {
-            agendaRows.push(trimmed);
-          }
-        } else if (state === "kesimpulan") {
-          if (trimmed && !isDivider && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.toLowerCase().includes("kesimpulan / keputusan")) {
-            kesimpulanRows.push(trimmed);
-          }
-        }
-      }
-
-      // Parse signatures block
-      let signatureLineIndex = -1;
-      for (let i = 0; i < lines.length; i++) {
-        if (
-          lines[i].trim().startsWith("Mengetahui") ||
-          (lines[i].trim().includes("Pimpinan Rapat") && lines[i].trim().includes("Notulen Rapat"))
-        ) {
-          signatureLineIndex = i;
-        }
-      }
-
-      if (signatureLineIndex !== -1) {
-        const sigLines = lines.slice(signatureLineIndex).filter((l) => l.trim());
-        const nameLines = sigLines.filter(
-          (l) => l.trim() && !l.includes("Mengetahui") && !l.includes("Pimpinan Rapat") && !l.includes("Notulen Rapat") && !l.includes("NIP")
-        );
-        if (nameLines.length >= 1) {
-          const parts = nameLines[0].split(/\s{3,}/);
-          if (parts[0]) pimpinanRapat = parts[0].replace(/[\[\]]/g, "").trim();
-          if (parts[1]) notulenRapat = parts[1].replace(/[\[\]]/g, "").trim();
-        }
-        const nipLines = sigLines.filter((l) => l.includes("NIP."));
-        if (nipLines.length >= 1) {
-          const parts = nipLines[0].split(/\s{3,}/);
-          if (parts[0]) nipPimpinan = parts[0].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
-          if (parts[1]) nipNotulen = parts[1].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
-        }
-      }
-
-      const children = [];
-
-      // Add text fallback kop surat function
-      const addTextHeader = (targetArray) => {
-        targetArray.push(
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "MAHKAMAH AGUNG REPUBLIK INDONESIA", bold: true, font: "Arial", size: 28 }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "DIREKTORAT JENDERAL BADAN PERADILAN AGAMA", bold: true, font: "Arial", size: 24 }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "PENGADILAN TINGGI AGAMA JAYAPURA", bold: true, font: "Arial", size: 24 }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "PENGADILAN AGAMA PANIAI", bold: true, font: "Arial", size: 28 }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676", font: "Arial", size: 18, italics: true }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com", font: "Arial", size: 18, italics: true }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                text: "=========================================================================",
-                bold: true,
-                font: "Arial",
-                size: 20,
-              }),
-            ],
-            spacing: { after: 300 },
-          })
-        );
-      };
-
-      // Try fetching kop surat image from public assets
-      let hasKopSuratImg = false;
-      let kopBuffer = null;
-      try {
-        const kopRes = await fetch("/kop surat.png");
-        if (kopRes.ok) {
-          kopBuffer = await kopRes.arrayBuffer();
-          hasKopSuratImg = true;
-        }
-      } catch (e) {
-        console.warn("Kop surat gambar tidak terjangkau, menggunakan teks.", e);
-      }
-
-      if (hasKopSuratImg && kopBuffer) {
-        try {
-          children.push(
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new ImageRun({
-                  data: kopBuffer,
-                  transformation: {
-                    width: 600,
-                    height: 110,
-                  },
-                }),
-              ],
-              spacing: { after: 300 },
-            })
-          );
-        } catch (docxImgErr) {
-          console.error("Gagal menyematkan kop surat gambar, menggunakan teks kop surat:", docxImgErr);
-          addTextHeader(children);
-        }
-      } else {
-        addTextHeader(children);
-      }
-
-      // Title
-      children.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [
-            new TextRun({ text: "NOTULEN RAPAT", bold: true, font: "Arial", size: 32 }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-
-      // Metadata Table
-      const metadataTable = new Table({
-        rows: [
-          new TableRow({
-            children: [
-              createStyledCell("Kode Dokumen", true),
-              createStyledCell("Tgl. Pembuatan", true),
-              createStyledCell("Tgl. Revisi", true),
-              createStyledCell("Tgl. Efektif", true),
-            ],
-          }),
-          new TableRow({
-            children: [
-              createStyledCell("FM/AM/04/02"),
-              createStyledCell("02/05/2018"),
-              createStyledCell("....................."),
-              createStyledCell("02/05/2018"),
-            ],
-          }),
-        ],
-        width: {
-          size: 100,
-          type: WidthType.PERCENTAGE,
-        },
-      });
-
-      children.push(metadataTable);
-      children.push(new Paragraph({ spacing: { after: 200 } }));
-
-      // Details lines
-      const addDetailLine = (label, value) => {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({ text: label.padEnd(20, " "), bold: true, font: "Arial", size: 22 }),
-              new TextRun({ text: `: ${value}`, font: "Arial", size: 22 }),
-            ],
-            spacing: { after: 100 },
-          })
-        );
-      };
-
-      addDetailLine("Hari/Tanggal/Jam", hariTanggalJam);
-      addDetailLine("Tempat", tempat);
-      addDetailLine("Pimpinan Rapat", pimpinanRapat);
-
-      let pesertaLine = ".....................";
-      const pLine = lines.find((l) => l.includes("Peserta Rapat"));
-      if (pLine) {
-        pesertaLine = pLine.split(":")[1]?.trim() || pesertaLine;
-      }
-      addDetailLine("Peserta Rapat", pesertaLine);
-
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: "------------------------------------------------------------------------------------------------------------------------",
-              color: "888888",
-            }),
-          ],
-          spacing: { before: 200, after: 200 },
-        })
-      );
-
-      // Agenda Rapat Section
-      children.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [
-            new TextRun({ text: "Agenda Rapat", bold: true, font: "Arial", size: 24 }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-
-      if (agendaRows.length > 0) {
-        for (const row of agendaRows) {
-          children.push(
-            new Paragraph({
-              children: [new TextRun({ text: row, font: "Arial", size: 22 })],
-              spacing: { after: 100 },
-            })
-          );
-        }
-      } else {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: 'Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim".',
-                font: "Arial",
-                size: 22,
-              }),
-            ],
-            spacing: { after: 100 },
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan Agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian.",
-                font: "Arial",
-                size: 22,
-              }),
-            ],
-            spacing: { after: 100 },
-          })
-        );
-      }
-
-      // Kesimpulan Section
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: "------------------------------------------------------------------------------------------------------------------------",
-              color: "888888",
-            }),
-          ],
-          spacing: { before: 200, after: 200 },
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [
-            new TextRun({ text: "Kesimpulan / Keputusan Rapat", bold: true, font: "Arial", size: 24 }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-
-      if (kesimpulanRows.length > 0) {
-        for (const row of kesimpulanRows) {
-          children.push(
-            new Paragraph({
-              children: [new TextRun({ text: row, font: "Arial", size: 22 })],
-              spacing: { after: 100 },
-            })
-          );
-        }
-      } else {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "Belum ada kesimpulan rapat yang dimasukkan.",
-                font: "Arial",
-                size: 22,
-                italics: true,
-              }),
-            ],
-            spacing: { after: 100 },
-          })
-        );
-      }
-
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: 'Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL\'ALAMIN".',
-              font: "Arial",
-              size: 22,
-            }),
-          ],
-          spacing: { before: 200, after: 300 },
-        }),
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: "------------------------------------------------------------------------------------------------------------------------",
-              color: "888888",
-            }),
-          ],
-          spacing: { after: 300 },
-        })
-      );
-
-      // Signatures Section
-      children.push(
-        new Paragraph({
-          children: [new TextRun({ text: "Mengetahui,", font: "Arial", size: 22 })],
-          spacing: { after: 100 },
-        })
-      );
-
-      const signaturesTable = new Table({
-        rows: [
-          new TableRow({
-            children: [
-              new TableCell({
-                children: [
-                  new Paragraph({
-                    children: [new TextRun({ text: "Pimpinan Rapat", bold: true, font: "Arial", size: 22 })],
-                  }),
-                  new Paragraph({ spacing: { before: 1200 } }),
-                  new Paragraph({
-                    children: [new TextRun({ text: pimpinanRapat, bold: true, font: "Arial", size: 22 })],
-                  }),
-                  new Paragraph({
-                    children: [new TextRun({ text: `NIP. ${nipPimpinan}`, font: "Arial", size: 20 })],
-                  }),
-                ],
-                width: { size: 50, type: WidthType.PERCENTAGE },
-              }),
-              new TableCell({
-                children: [
-                  new Paragraph({
-                    children: [new TextRun({ text: "Notulen Rapat", bold: true, font: "Arial", size: 22 })],
-                  }),
-                  new Paragraph({ spacing: { before: 1200 } }),
-                  new Paragraph({
-                    children: [new TextRun({ text: notulenRapat, bold: true, font: "Arial", size: 22 })],
-                  }),
-                  new Paragraph({
-                    children: [new TextRun({ text: `NIP. ${nipNotulen}`, font: "Arial", size: 20 })],
-                  }),
-                ],
-                width: { size: 50, type: WidthType.PERCENTAGE },
-              }),
-            ],
-          }),
-        ],
-        width: {
-          size: 100,
-          type: WidthType.PERCENTAGE,
-        },
-        borders: {
-          top: { style: BorderStyle.NONE, size: 0, color: "auto" },
-          bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
-          left: { style: BorderStyle.NONE, size: 0, color: "auto" },
-          right: { style: BorderStyle.NONE, size: 0, color: "auto" },
-          insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "auto" },
-          insideVertical: { style: BorderStyle.NONE, size: 0, color: "auto" },
-        },
-      });
-
-      children.push(signaturesTable);
-
-      const doc = new Document({
-        sections: [
-          {
-            properties: {},
-            children,
-          },
-        ],
-      });
-
-      const docxBlob = await Packer.toBlob(doc);
-      const url = URL.createObjectURL(docxBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "Notulensi_PA_Paniai.docx";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error(err);
-      setError("Gagal mengekspor dokumen Word (.docx): " + err.message);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#fdfcf9] text-stone-800 flex flex-col font-sans selection:bg-emerald-100 selection:text-[#064e3b]">
       {/* HEADER BANNER */}
       <header className="bg-[#064e3b] text-[#fdfcf9] py-4 px-6 shadow-md border-b-2 border-[#d4af37] shrink-0">
-        <div className="max-w-4xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4 w-full">
-          <div className="flex items-center gap-4">
-            <div className="bg-white/10 rounded-lg p-2 border border-white/20 shadow-inner">
-              <Scale className="h-7 w-7 text-[#fdfcf9]" />
-            </div>
-            <div>
-              <h1 className="text-base md:text-lg font-bold tracking-tight uppercase">
-                Notulensi Rapat Otomatis <span className="text-xs font-normal lowercase italic text-emerald-300 ml-1 font-sans normal-case">by idris</span>
-              </h1>
-              <p className="text-[9px] md:text-xs uppercase tracking-wider opacity-90 font-medium">
-                Pengadilan Agama Paniai • Mahkamah Agung RI
-              </p>
-            </div>
+        <div className="max-w-4xl mx-auto flex items-center gap-4 w-full">
+          <div className="bg-white/10 rounded-lg p-2 border border-white/20 shadow-inner">
+            <Scale className="h-7 w-7 text-[#fdfcf9]" />
           </div>
-          <div className="bg-emerald-950/40 px-3 py-1.5 rounded-full border border-emerald-500/20 text-[10px] md:text-xs text-emerald-300 font-bold self-start md:self-auto uppercase tracking-widest flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            Dinas Resmi Secure Edition
+          <div>
+            <h1 className="text-base md:text-lg font-bold tracking-tight uppercase">
+              Sistem Notulensi Rapat Otomatis <span className="text-xs font-normal lowercase italic text-emerald-300 ml-1 font-sans normal-case">by idris</span>
+            </h1>
+            <p className="text-[9px] md:text-xs uppercase tracking-wider opacity-90 font-medium">
+              Pengadilan Agama Paniai • Mahkamah Agung RI
+            </p>
           </div>
         </div>
       </header>
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 space-y-6">
-
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-6 space-y-6">
         {/* WELCOME INSTRUCTION */}
         <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-4 md:p-5">
           <h2 className="text-sm font-bold text-stone-900 mb-1.5 flex items-center gap-2">
-            ⚖️ Notulen Rapat Dinas Resmi PA Paniai
+            ⚖️ Notulen Rapat Dinas Profesional
           </h2>
           <p className="text-xs text-stone-500 leading-relaxed">
-            Anda dapat merekam suara secara langsung, mengunggah berkas rekaman suara yang ada di memori internal HP/Laptop Anda (mendukung berkas berukuran besar hingga 100MB tanpa batasan hosting), atau memasukkan poin catatan rapat kasar secara tertulis untuk diterjemahkan menjadi format dinas resmi Pengadilan Agama Paniai.
+            Gunakan perekam suara langsung melalui mikrofon HP/Laptop atau unggah berkas audio rapat untuk menghasilkan draf Notulensi Rapat resmi yang eksat, faktual, dan bebas halusinasi.
           </p>
         </div>
 
@@ -1072,34 +349,23 @@ ${notulensiResult}`;
               onClick={() => { setInputMethod("record"); setError(null); }}
               className={`flex-1 py-3 text-center font-semibold text-xs uppercase tracking-wider border-b-2 flex items-center justify-center space-x-2 transition-all ${
                 inputMethod === "record"
-                  ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
+                  ? "border-[#064e3b] text-[#064e3b] bg-white"
                   : "border-transparent text-stone-500 hover:text-stone-800"
               }`}
             >
               <Mic className="h-3.5 w-3.5" />
-              <span>Rekam Suara</span>
+              <span>Rekam Langsung</span>
             </button>
             <button
               onClick={() => { setInputMethod("upload"); setError(null); }}
               className={`flex-1 py-3 text-center font-semibold text-xs uppercase tracking-wider border-b-2 flex items-center justify-center space-x-2 transition-all ${
                 inputMethod === "upload"
-                  ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
+                  ? "border-[#064e3b] text-[#064e3b] bg-white"
                   : "border-transparent text-stone-500 hover:text-stone-800"
               }`}
             >
               <Upload className="h-3.5 w-3.5" />
-              <span>Unggah Berkas</span>
-            </button>
-            <button
-              onClick={() => { setInputMethod("text"); setError(null); }}
-              className={`flex-1 py-3 text-center font-semibold text-xs uppercase tracking-wider border-b-2 flex items-center justify-center space-x-2 transition-all ${
-                inputMethod === "text"
-                  ? "border-[#064e3b] text-[#064e3b] bg-white font-bold"
-                  : "border-transparent text-stone-500 hover:text-stone-800"
-              }`}
-            >
-              <FileCode className="h-3.5 w-3.5" />
-              <span>Catatan Rapat</span>
+              <span>Unggah Audio</span>
             </button>
           </div>
 
@@ -1140,12 +406,12 @@ ${notulensiResult}`;
                       </button>
                       <div>
                         <span className="text-xs font-bold text-stone-700 block">Klik tombol untuk mulai merekam</span>
-                        <span className="text-[10px] text-stone-400 mt-0.5 block font-medium">Format audio webm aman & didukung peramban</span>
+                        <span className="text-[10px] text-stone-400 mt-0.5 block">Format rekam aman didukung di Android/iOS/PC</span>
                       </div>
                     </div>
                   )}
 
-                  {/* Speech to text dictation toggle */}
+                  {/* Speech to text toggle */}
                   {!isRecording && (
                     <div className="mt-4 flex items-center gap-3 bg-white p-3 border border-stone-200 rounded-lg text-left w-full shadow-sm">
                       <input
@@ -1158,7 +424,7 @@ ${notulensiResult}`;
                       <label htmlFor="use-realtime-speech-v2" className="text-xs text-stone-700 font-medium cursor-pointer select-none flex-1">
                         <span className="font-bold text-[#064e3b]">Transkripsi Real-Time (Web Speech)</span>
                         <p className="text-[10px] text-stone-500 mt-0.5 font-normal leading-tight">
-                          Diktekan teks langsung di layar saat Anda sedang berbicara di rapat untuk meningkatkan presisi.
+                          Tampilkan teks langsung di layar saat Anda sedang berbicara di rapat.
                         </p>
                       </label>
                     </div>
@@ -1166,7 +432,7 @@ ${notulensiResult}`;
 
                   {recordedUrl && !isRecording && (
                     <div className="mt-4 w-full bg-white p-3 border border-stone-200 rounded-lg text-left shadow-sm">
-                      <span className="text-xs text-stone-500 block mb-2 font-medium">Hasil Rekaman Suara Anda:</span>
+                      <span className="text-xs text-stone-500 block mb-2 font-medium">Hasil Rekaman Terakhir:</span>
                       <audio src={recordedUrl} controls className="w-full h-10" />
                     </div>
                   )}
@@ -1212,10 +478,10 @@ ${notulensiResult}`;
                         <Upload className="h-5 w-5" />
                       </div>
                       <p className="text-xs font-semibold text-stone-700">
-                        {selectedFile ? selectedFile.name : "Klik atau seret berkas rekaman suara Anda kesini"}
+                        {selectedFile ? selectedFile.name : "Klik atau seret file audio kesini"}
                       </p>
                       <p className="text-[10px] text-stone-400">
-                        Mendukung MP3, WAV, M4A, AAC, atau WebM (Hingga 100MB)
+                        Mendukung MP3, WAV, M4A, atau WebM (Maks. 25MB)
                       </p>
                     </div>
                     <input
@@ -1242,47 +508,17 @@ ${notulensiResult}`;
               </div>
             )}
 
-            {/* DIRECT TEXT INPUT CARD */}
-            {inputMethod === "text" && (
-              <div className="space-y-3 max-w-lg mx-auto">
-                <span className="text-xs text-stone-600 font-bold block">Poin-Poin atau Catatan Kasar Rapat:</span>
-                <textarea
-                  value={summaryPoints}
-                  onChange={(e) => setSummaryPoints(e.target.value)}
-                  placeholder="Contoh: Hari Senin 17 Juli, dipimpin Ketua Ahmad Muhtar. Agenda evaluasi PPNPN. Kesimpulan: Evaluasi harus selesai sebelum tanggal 25. Subbagian kepegawaian bertanggung jawab..."
-                  className="w-full text-xs font-mono p-3 border border-stone-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#064e3b] min-h-[140px] bg-stone-50/20"
-                ></textarea>
-                <p className="text-[10px] text-stone-400 font-medium">
-                  *Poin-poin di atas akan diformulasikan ke format dinas resmi lengkap dengan penomoran, EYD V, dan detail profesional secara instan.
-                </p>
-              </div>
-            )}
-
-            {/* RESET INPUT AND FILE TRIGGER */}
-            {((inputMethod === "upload" && selectedFile) || (inputMethod === "record" && recordedBlob) || (inputMethod === "text" && summaryPoints)) && (
-              <div className="max-w-md mx-auto mt-4">
-                <button
-                  onClick={clearAudio}
-                  disabled={isProcessing}
-                  className="w-full py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Hapus & Reset Masukan
-                </button>
-              </div>
-            )}
-
             {/* PROCESS TRIGGER */}
             <div className="mt-5 max-w-md mx-auto">
               <button
                 onClick={handleProcessAudio}
-                disabled={isProcessing || (inputMethod === "record" && !recordedBlob) || (inputMethod === "upload" && !selectedFile) || (inputMethod === "text" && !summaryPoints.trim())}
+                disabled={isProcessing || (inputMethod === "record" && !recordedBlob) || (inputMethod === "upload" && !selectedFile)}
                 className="w-full bg-[#064e3b] hover:bg-emerald-900 text-white py-3 px-4 rounded-xl font-bold text-xs tracking-wider uppercase disabled:opacity-40 transition-all flex items-center justify-center space-x-2 shadow"
               >
                 {isProcessing ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>SEDANG MEMROSES...</span>
+                    <span>SEDANG MEMBACA RAPAT...</span>
                   </>
                 ) : (
                   <>
@@ -1294,88 +530,21 @@ ${notulensiResult}`;
             </div>
           </div>
         </div>
-        
-        {/* API Key Configuration Block */}
-        <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 max-w-xl mx-auto">
-          <button
-            onClick={() => setShowApiKey(!showApiKey)}
-            className="w-full flex items-center justify-between text-left font-semibold text-stone-900 text-xs md:text-sm"
-          >
-            <span className="flex items-center gap-2">
-              <Key className="h-4 w-4 text-[#064e3b]" />
-              🔐 Pengaturan API Key {isKeySaved && "• Aktif"}
-            </span>
-            <span className="text-stone-400 hover:text-stone-600 font-bold font-mono">
-              {showApiKey ? "[-]" : "[+]"}
-            </span>
-          </button>
-          
-          {showApiKey && (
-            <div className="mt-4 pt-3.5 border-t border-stone-100 flex flex-col gap-3 font-sans">
-              <p className="text-stone-600 text-xs leading-relaxed">
-                Gunakan Kunci API Gemini Anda dari Google AI Studio sendiri untuk memproses berkas audio besar <strong>&gt;4.2MB (hingga 100MB)</strong> secara langsung dan aman dari browser Anda (Zero-Backend). Kunci Anda disimpan lokal di browser.
-              </p>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type={showApiKeyInput ? "text" : "password"}
-                    value={geminiApiKey}
-                    onChange={(e) => handleApiKeyChange(e.target.value)}
-                    placeholder="Masukkan AI Studio API Key..."
-                    className="w-full text-xs bg-stone-50 border border-stone-300 rounded-lg py-2 pl-3.5 pr-10 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono text-stone-800"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKeyInput(!showApiKeyInput)}
-                    className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600"
-                  >
-                    {showApiKeyInput ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <button
-                  onClick={handleSaveApiKey}
-                  className="py-2 px-4 bg-[#064e3b] text-white hover:bg-[#043d2e] rounded-lg text-xs font-bold transition-all shadow-sm"
-                >
-                  Simpan
-                </button>
-              </div>
-              {isKeySaved && (
-                <p className="text-emerald-700 text-[10px] font-bold flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Kunci terpasang di browser Anda. Mode Zero-Backend aktif untuk semua pengolahan.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
 
-        {/* LOADING PROGRESS BOX (HIGHLY VISIBLE) */}
+        {/* LOADING BOX */}
         {isProcessing && (
-          <div className="p-6 bg-white border border-stone-200 rounded-xl text-center space-y-4 max-w-md mx-auto shadow-md">
+          <div className="p-5 bg-white border border-stone-200 rounded-xl text-center space-y-3">
             <div className="relative mb-2 flex flex-col items-center">
-              {/* Spinner */}
-              <div className="h-16 w-16 rounded-full border-4 border-stone-100 border-t-[#064e3b] animate-spin"></div>
+              <div className="h-14 w-14 rounded-full border-4 border-stone-200 border-t-[#064e3b] animate-spin"></div>
               <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-[#064e3b]">
                 {progressPercent}%
               </span>
             </div>
-            <div>
-              <h3 className="text-xs font-bold text-stone-900">Proses Pengecekan AI Sedang Berjalan</h3>
-              <p className="text-[10px] text-stone-400 uppercase tracking-widest mt-0.5">Mohon tunggu beberapa saat</p>
+            <h3 className="text-xs font-bold text-stone-800">Menyusun Notulensi Pengadilan Agama Paniai</h3>
+            <div className="w-full max-w-xs bg-stone-200 h-2 rounded-full mx-auto overflow-hidden">
+              <div className="bg-[#064e3b] h-full rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
             </div>
-            
-            {/* Real Progress Bar */}
-            <div className="w-full bg-stone-100 h-2.5 rounded-full overflow-hidden border border-stone-200 shadow-inner">
-              <div 
-                className="bg-gradient-to-r from-emerald-600 to-[#064e3b] h-full rounded-full transition-all duration-300" 
-                style={{ width: `${progressPercent}%` }}
-              ></div>
-            </div>
-            
-            {/* Progress Label / State */}
-            <div className="bg-[#fcfbf9] border border-[#d2dfd8] rounded-lg p-3">
-              <p className="text-xs text-[#064e3b] font-semibold italic">"{progressMessage}"</p>
-            </div>
+            <p className="text-[11px] text-stone-500 italic">"{progressMessage}"</p>
           </div>
         )}
 
@@ -1384,132 +553,64 @@ ${notulensiResult}`;
           <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start space-x-2 max-w-md mx-auto">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">Gagal Memproses Notulensi</p>
-              <p className="text-stone-600 mt-0.5 leading-relaxed">{error}</p>
+              <p className="font-bold">Gagal Memproses Notulen</p>
+              <p className="text-stone-600 mt-0.5">{error}</p>
             </div>
           </div>
         )}
 
         {/* SUCCESS OUTPUT */}
         {resultMarkdown && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left/Main Column: Paper Document Preview */}
-            <div className="lg:col-span-8 space-y-4 w-full">
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
-                <span className="text-[11px] font-bold text-[#064e3b] uppercase tracking-wider flex items-center space-x-1.5">
-                  <Sparkles className="h-4 w-4" />
-                  <span>Notulensi Rapat Berhasil Disusun!</span>
-                </span>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
-                  <button
-                    onClick={handleCopy}
-                    className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="h-3.5 w-3.5 text-emerald-600" />
-                        <span className="text-emerald-600">Disalin</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-3.5 w-3.5 text-stone-500" />
-                        <span>Salin</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={handleDownloadTxt}
-                    className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
-                  >
-                    <FileText className="h-3.5 w-3.5 text-stone-500" />
-                    <span>TXT</span>
-                  </button>
-                  <button
-                    onClick={handleDownloadDocx}
-                    className="px-3 py-1.5 text-white bg-stone-800 hover:bg-black rounded-lg text-[11px] font-semibold shadow-sm flex items-center space-x-1"
-                  >
-                    <Download className="h-3.5 w-3.5 text-stone-300" />
-                    <span>Download Word (.docx)</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* TEXTAREA CONTAINER AND PREVIEW */}
-              <div className="bg-white shadow border border-stone-200 rounded-md overflow-hidden flex flex-col">
-                <div className="bg-stone-50 border-b border-stone-200 px-4 py-2 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">Lembar Notulen Kasar Editor</span>
-                  <span className="text-[10px] text-stone-400 italic">Dapat diedit langsung sebelum disalin</span>
-                </div>
-                <textarea
-                  value={resultMarkdown}
-                  onChange={(e) => setResultMarkdown(e.target.value)}
-                  className="w-full text-xs font-mono p-4 min-h-[300px] border-none focus:outline-none text-stone-800 bg-[#fdfbf7] leading-relaxed resize-y select-text"
-                ></textarea>
-              </div>
-
-              {/* PAPER PREVIEW */}
-              <div className="bg-white shadow border border-stone-200 rounded-md p-6 md:p-10 font-serif text-stone-800 leading-relaxed w-full mx-auto relative select-text">
-                <div className="text-center border-b-2 border-stone-800 pb-3 mb-4 select-none">
-                  <h2 className="text-xs md:text-sm font-bold uppercase">MAHKAMAH AGUNG REPUBLIK INDONESIA</h2>
-                  <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">DIREKTORAT JENDERAL BADAN PERADILAN AGAMA</h3>
-                  <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">PENGADILAN TINGGI AGAMA JAYAPURA</h3>
-                  <h1 className="text-xs md:text-sm font-bold uppercase mt-0.5">PENGADILAN AGAMA PANIAI</h1>
-                  <p className="text-[9px] font-sans text-stone-500 italic mt-1">
-                    Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
-                  </p>
-                  <p className="text-[9px] font-sans text-stone-500 italic">
-                    www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
-                  </p>
-                </div>
-                <div className="prose prose-stone max-w-none text-xs font-sans whitespace-pre-wrap leading-relaxed">
-                  {resultMarkdown}
-                </div>
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <span className="text-[11px] font-bold text-[#064e3b] uppercase tracking-wider flex items-center space-x-1.5">
+                <Sparkles className="h-4 w-4" />
+                <span>Dokumen Notulen Selesai Disusun!</span>
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  onClick={handleCopy}
+                  className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      <span className="text-emerald-600">Disalin</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5 text-stone-500" />
+                      <span>Salin Hasil</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleDownloadTxt}
+                  className="px-3 py-1.5 text-stone-700 bg-white border border-stone-200 rounded-lg text-[11px] font-semibold hover:bg-stone-50 shadow-sm flex items-center space-x-1"
+                >
+                  <Download className="h-3.5 w-3.5 text-stone-500" />
+                  <span>Unduh Dokumen</span>
+                </button>
               </div>
             </div>
 
-            {/* Right Column: Executive Summary AI Card */}
-            <div className="lg:col-span-4 w-full">
-              {executiveSummary ? (
-                <div className="bg-white rounded-xl shadow-sm border border-stone-200 border-t-4 border-[#d4af37] p-5 lg:sticky lg:top-6 space-y-4">
-                  <div className="flex items-center gap-2.5 pb-3 mb-2 border-b border-stone-100">
-                    <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-100">
-                      <Wand2 className="h-4.5 w-4.5 text-emerald-700" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                        Ringkasan Eksekutif
-                      </h4>
-                      <p className="text-[10px] text-stone-500 font-sans">
-                        3 Keputusan Utama Rapat
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {executiveSummary.map((point, index) => (
-                      <div key={index} className="flex gap-3 items-start">
-                        <span className="flex-shrink-0 h-5 w-5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center text-[10px] font-bold font-mono">
-                          {index + 1}
-                        </span>
-                        <p className="text-stone-700 text-xs leading-relaxed font-sans font-medium">
-                          {point}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="pt-4 border-t border-stone-100 flex items-center justify-between text-[10px] text-stone-400 font-sans font-medium">
-                    <span>Sistem Otomatis</span>
-                    <span>EYD V Terverifikasi</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white rounded-xl shadow-sm border border-stone-200 p-5 text-center">
-                  <p className="text-xs text-stone-400 italic font-medium">
-                    Ringkasan Eksekutif (3 Keputusan Utama) akan ditampilkan di sini setelah dokumen selesai disusun oleh Gemini.
-                  </p>
-                </div>
-              )}
+            {/* PAPER PREVIEW */}
+            <div className="bg-white shadow border border-stone-200 rounded-md p-6 md:p-10 font-serif text-stone-800 leading-relaxed max-w-2xl mx-auto">
+              <div className="text-center border-b-2 border-stone-800 pb-3 mb-4">
+                <h2 className="text-xs md:text-sm font-bold uppercase">MAHKAMAH AGUNG REPUBLIK INDONESIA</h2>
+                <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">DIREKTORAT JENDERAL BADAN PERADILAN AGAMA</h3>
+                <h3 className="text-[10px] md:text-xs font-bold uppercase mt-0.5">PENGADILAN TINGGI AGAMA JAYAPURA</h3>
+                <h1 className="text-xs md:text-sm font-bold uppercase mt-0.5">PENGADILAN AGAMA PANIAI</h1>
+                <p className="text-[9px] font-sans text-stone-500 italic mt-1">
+                  Kompleks Kantor Bupati Paniai, Paniai Timur, Paniai, Telp. 085244544676
+                </p>
+                <p className="text-[9px] font-sans text-stone-500 italic">
+                  www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
+                </p>
+              </div>
+              <div className="prose prose-stone max-w-none text-xs font-sans whitespace-pre-wrap leading-relaxed">
+                {resultMarkdown}
+              </div>
             </div>
           </div>
         )}
@@ -1518,7 +619,7 @@ ${notulensiResult}`;
       {/* FOOTER */}
       <footer className="bg-stone-900 text-stone-400 py-4 text-center text-[11px] mt-10 border-t border-stone-800">
         <p>© {new Date().getFullYear()} Pengadilan Agama Paniai. Hak Cipta Dilindungi.</p>
-        <p className="text-stone-600 mt-0.5">Sistem Notulensi Otomatis didukung oleh Google Gemini (Client-Side Resumable API)</p>
+        <p className="text-stone-600 mt-0.5">Sistem Notulensi Otomatis didukung oleh Google Gemini</p>
       </footer>
     </div>
   );

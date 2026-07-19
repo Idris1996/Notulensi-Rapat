@@ -1,115 +1,69 @@
-import multer from "multer";
-import { GoogleGenAI } from "@google/genai";
-import { Request, Response } from "express";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { NextResponse } from "next/server";
 
-// Disable default Vercel body parser to allow multer to parse multipart form data
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max file size
-  },
-});
-
-// Helper function to run multer middleware
-function runMiddleware(req: Request, res: Response, fn: any): Promise<any> {
-  return new Promise((resolve, reject) => {
-    fn(req, res, (result: any) => {
-      if (result instanceof Error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
-  });
-}
-
-function parseJsonBody(req: Request): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-    });
-    req.on("end", () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch (err) {
-        reject(err);
-      }
-    });
-    req.on("error", (err) => {
-      reject(err);
-    });
-  });
-}
-
-export default async function handler(req: Request, res: Response) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
-
+export async function POST(request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda.",
-      });
-    }
-
-    const contentType = req.headers["content-type"] || "";
+    const contentType = request.headers.get("content-type") || "";
     let fileUri = "";
     let mimeType = "";
     let base64Data = "";
-    let realtimeTranscript = "";
+    let notes = "";
     let isTextOnly = false;
     let summaryPoints = "";
 
     if (contentType.includes("application/json")) {
-      try {
-        const body = await parseJsonBody(req);
-        isTextOnly = body.isTextOnly === "true" || body.isTextOnly === true;
-        summaryPoints = body.summaryPoints || "";
-        fileUri = body.fileUri || "";
-        mimeType = body.mimeType || "";
-        realtimeTranscript = body.realtimeTranscript || "";
-      } catch (parseErr: any) {
-        return res.status(400).json({ error: `Gagal membaca body JSON: ${parseErr.message}` });
-      }
-      if (!isTextOnly && !fileUri) {
-        return res.status(400).json({ error: "fileUri wajib disertakan untuk input JSON." });
-      }
+      const body = await request.json();
+      isTextOnly = body.isTextOnly === "true" || body.isTextOnly === true;
+      summaryPoints = body.summaryPoints || "";
+      fileUri = body.fileUri;
+      mimeType = body.mimeType;
+      notes = body.notes || body.realtimeTranscript || "";
     } else {
-      // Run the multer upload middleware
-      await runMiddleware(req, res, upload.single("audio"));
-
-      isTextOnly = req.body.isTextOnly === "true" || req.body.isTextOnly === true;
-      summaryPoints = req.body.summaryPoints || "";
-      realtimeTranscript = req.body.realtimeTranscript || "";
+      const formData = await request.formData();
+      isTextOnly = formData.get("isTextOnly") === "true" || formData.get("isTextOnly") === true;
+      summaryPoints = formData.get("summaryPoints") || "";
+      notes = formData.get("notes") || formData.get("realtimeTranscript") || "";
 
       if (!isTextOnly) {
-        const file = req.file;
-        if (!file) {
-          return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
+        const audioFile = formData.get("file") || formData.get("audio");
+        if (!audioFile) {
+          return NextResponse.json(
+            { error: "File audio tidak ditemukan dalam request. Pastikan parameter bernama 'file' atau 'audio'." },
+            { status: 400 }
+          );
         }
-        mimeType = file.mimetype;
 
-        // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
+        // Validasi tipe data file audio untuk mencegah crash pembacaan buffer
+        if (!audioFile || typeof audioFile === "string" || !audioFile.arrayBuffer) {
+          return NextResponse.json(
+            { error: "Format berkas audio tidak valid atau rusak. Silakan coba rekam atau unggah berkas audio asli." },
+            { status: 400 }
+          );
+        }
+
+        // Ambil bytes dari file audio
+        const bytes = await audioFile.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        mimeType = audioFile.type || "audio/webm";
+
         if (mimeType.includes(";")) {
           mimeType = mimeType.split(";")[0].trim();
         }
-        // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
         if (mimeType === "video/webm") {
           mimeType = "audio/webm";
         }
 
-        // If file is larger than 4MB, upload server-side to Gemini File API
-        if (file.buffer.length > 4 * 1024 * 1024) {
-          console.log(`Server-side uploading file (${(file.buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          return NextResponse.json(
+            { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
+            { status: 500 }
+          );
+        }
+
+        // Jika file lebih besar dari 4MB, upload server-side ke Gemini File API
+        if (buffer.length > 4 * 1024 * 1024) {
+          console.log(`[NextJS] Server-side uploading file (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) to Gemini File API...`);
           const startRes = await fetch(
             `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
             {
@@ -117,13 +71,13 @@ export default async function handler(req: Request, res: Response) {
               headers: {
                 "X-Goog-Upload-Protocol": "resumable",
                 "X-Goog-Upload-Command": "start",
-                "X-Goog-Upload-Header-Content-Length": file.buffer.length.toString(),
+                "X-Goog-Upload-Header-Content-Length": buffer.length.toString(),
                 "X-Goog-Upload-Header-Content-Type": mimeType,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
                 file: {
-                  displayName: file.originalname || "rekaman_rapat.webm",
+                  displayName: audioFile.name || "rekaman_rapat.webm",
                 },
               }),
             }
@@ -145,14 +99,14 @@ export default async function handler(req: Request, res: Response) {
               "X-Goog-Upload-Command": "upload, finalize",
               "Content-Type": mimeType,
             },
-            body: file.buffer,
+            body: buffer,
           });
 
           if (!uploadRes.ok) {
             throw new Error(`Gagal mengunggah file server ke Google: ${await uploadRes.text()}`);
           }
 
-          const uploadResult: any = await uploadRes.json();
+          const uploadResult = await uploadRes.json();
           fileUri = uploadResult.uri || uploadResult.file?.uri || "";
           if (!fileUri && uploadResult.name) {
             fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.name}`;
@@ -160,12 +114,23 @@ export default async function handler(req: Request, res: Response) {
           if (!fileUri && uploadResult.file?.name) {
             fileUri = `https://generativelanguage.googleapis.com/v1beta/${uploadResult.file.name}`;
           }
-          console.log(`Server-side upload complete. fileUri: ${fileUri}`);
+          console.log(`[NextJS] Server-side upload complete. fileUri: ${fileUri}`);
         } else {
-          base64Data = file.buffer.toString("base64");
+          base64Data = buffer.toString("base64");
         }
       }
     }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY belum dikonfigurasi di environment Vercel Anda." },
+        { status: 500 }
+      );
+    }
+
+    // Inisialisasi Google GenAI SDK (menggunakan @google/generative-ai)
+    const genAI = new GoogleGenerativeAI(apiKey);
 
     // Polling loop to wait for the file to become ACTIVE on Google's servers if a fileUri is provided
     if (!isTextOnly && fileUri) {
@@ -176,15 +141,15 @@ export default async function handler(req: Request, res: Response) {
       const maxAttempts = 30; // 30 attempts, 2 seconds interval = 60 seconds max
       let isActive = false;
       
-      console.log(`Starting file status polling for ${fileId}...`);
+      console.log(`Starting NextJS file status polling for ${fileId}...`);
       
       while (attempts < maxAttempts) {
         try {
           const fileCheckRes = await fetch(getFileUrl);
           if (fileCheckRes.ok) {
-            const fileCheckData: any = await fileCheckRes.json();
+            const fileCheckData = await fileCheckRes.json();
             const state = fileCheckData.state;
-            console.log(`Checking file status for ${fileId} (Attempt ${attempts + 1}/${maxAttempts}): state is ${state}`);
+            console.log(`NextJS checking file status for ${fileId} (Attempt ${attempts + 1}/${maxAttempts}): state is ${state}`);
             if (state === "ACTIVE") {
               isActive = true;
               break;
@@ -194,7 +159,7 @@ export default async function handler(req: Request, res: Response) {
           } else {
             console.warn(`Gagal memeriksa status file (HTTP ${fileCheckRes.status})`);
           }
-        } catch (err: any) {
+        } catch (err) {
           console.error("Error checking file status:", err);
           if (err.message && err.message.includes("gagal")) {
             throw err;
@@ -210,15 +175,13 @@ export default async function handler(req: Request, res: Response) {
       }
     }
 
-    let promptText = "";
-
+    let systemInstruction = "";
     if (isTextOnly) {
-      promptText = `
-Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas resmi yang SANGAT DETAIL, LENGKAP, FORMAL, dan PRESISI berdasarkan draf kasar/point-point rangkuman rapat yang disediakan oleh pengguna.
+      systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas resmi yang SANGAT DETAIL, LENGKAP, FORMAL, dan PRESISI berdasarkan draf kasar/point-point rangkuman rapat yang disediakan oleh pengguna.
 
 Tugas Anda adalah:
-1. Mengubah poin-poin/catatan rapat kasar/ringkasan yang terkesan informal atau singkat menjadi format tata naskah dinas resmi Mahkamah Agung (Pengadilan Agama Paniai) yang baku, formal, rapi, dan rapi sesuai Pedoman Tata Naskah Dinas Mahkamah Agung.
-2. Jangan kurangi detail atau kesimpulan penting apa pun dari poin-poin rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
+1. Mengubah draf kasar/point-point rangkuman rapat kasar yang terkesan informal atau singkat menjadi format tata naskah dinas resmi Mahkamah Agung (Pengadilan Agama Paniai) yang baku, formal, dan rapi sesuai Pedoman Tata Naskah Dinas Mahkamah Agung.
+2. Jangan kurangi detail atau kesimpulan penting apa pun dari draf kasar/point-point rapat yang disediakan. Kembangkan kalimatnya agar terdengar sangat profesional, dinas, dan formal tanpa menambah-nambahkan informasi fiktif yang tidak ada di dalam catatan kasar.
 3. Gunakan gaya bahasa dinas formal (EYD V) untuk merangkum dan menguraikan draf rapat tersebut.
 4. SANGAT PENTING (KUNCI UTAMA): Jangan melakukan penyederhanaan yang berlebihan. Setiap poin pembahasan, usulan, instruksi, masukan, kendala, dan tanggapan dari sub-bagian yang disebutkan di catatan kasar harus diuraikan secara RINCI, LENGKAP, dan JELAS.
 
@@ -266,11 +229,9 @@ Pimpinan Rapat                                        Notulen Rapat
 
 
 [Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
-`;
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
     } else {
-      promptText = `
-Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT, SANGAT DETAIL, LENGKAP, dan FAKTUAL berdasarkan seluruh isi file audio yang diunggah.
+      systemInstruction = `Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT, SANGAT DETAIL, LENGKAP, dan FAKTUAL berdasarkan seluruh isi file audio yang diunggah.
 
 ATURAN KETAT (ANTI-HALUSINASI & KELENGKAPAN MAKSIMAL):
 1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio.
@@ -318,34 +279,38 @@ Pimpinan Rapat                                        Notulen Rapat
 
 
 [Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
-`;
+NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]`;
     }
 
-    let finalPrompt = promptText;
-    if (!isTextOnly && realtimeTranscript && realtimeTranscript.trim().length > 0) {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      systemInstruction: systemInstruction,
+    });
+
+    let finalPrompt = isTextOnly 
+      ? "Susun draf notulensi rapat dinas resmi yang sangat detail, formal, dan lengkap berdasarkan draf kasar/point-point rangkuman rapat yang disediakan di atas."
+      : "Buat draf notulensi rapat dinas resmi berdasarkan rekaman audio di atas secara eksat dan faktual mengikuti instruksi sistem.";
+
+    if (!isTextOnly && notes && notes.trim().length > 0) {
       finalPrompt += `
 
 === CATATAN TRANSKRIPSI REAL-TIME WEB SPEECH API (REFERENSI AKURASI 100%) ===
 Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text) dari mikrofon browser selama rapat berlangsung. Gunakan teks ini bersama dengan rekaman suara audio di atas untuk memverifikasi detail kata per kata, nama pimpinan, sub-bagian, dan poin rapat yang dibicarakan secara eksak. Pastikan hasil notulensi sangat lengkap dan mencakup semua materi dari awal hingga akhir transkripsi kasar ini, tanpa ada yang dikurangi atau disederhanakan:
-"${realtimeTranscript}"
-=============================================================================
-`;
+"${notes}"
+=============================================================================`;
     }
 
-    const ai = new GoogleGenAI({ apiKey: apiKey });
-    
-    const parts: any[] = [];
+    let contents = [];
     if (!isTextOnly) {
       if (fileUri) {
-        parts.push({
+        contents.push({
           fileData: {
             fileUri: fileUri,
             mimeType: mimeType,
           },
         });
       } else {
-        parts.push({
+        contents.push({
           inlineData: {
             mimeType: mimeType,
             data: base64Data,
@@ -353,25 +318,23 @@ Berikut adalah hasil penangkapan suara real-time kata-demi-kata (speech-to-text)
         });
       }
     }
-    parts.push({
+    contents.push({
       text: finalPrompt,
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: {
-        parts: parts,
-      },
-    });
+    const result = await model.generateContent(contents);
 
-    const notulensiResult = response.text;
-    if (!notulensiResult) {
-      throw new Error("Gemini tidak mengembalikan hasil teks. Silakan coba rekam atau unggah ulang.");
+    const responseText = result.response.text();
+    if (!responseText) {
+      throw new Error("Model Gemini tidak mengembalikan respon teks. Silakan rekam atau unggah ulang berkas audio.");
     }
 
-    return res.status(200).json({ result: notulensiResult });
-  } catch (error: any) {
-    console.error("Gagal memproses audio dengan Gemini:", error);
-    return res.status(500).json({ error: error.message || "Gagal memproses notulensi rapat." });
+    return NextResponse.json({ result: responseText });
+  } catch (error) {
+    console.error("Gagal menyusun notulensi:", error);
+    return NextResponse.json(
+      { error: error.message || "Terjadi kesalahan internal saat memproses audio." },
+      { status: 500 }
+    );
   }
 }
