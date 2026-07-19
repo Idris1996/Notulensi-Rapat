@@ -137,6 +137,14 @@ export default function App() {
 
   const validateAndSetFile = (file: File) => {
     if (file.type.startsWith("audio/") || file.name.endsWith(".mp3") || file.name.endsWith(".wav") || file.name.endsWith(".m4a") || file.name.endsWith(".aac") || file.name.endsWith(".ogg") || file.name.endsWith(".webm") || file.name.endsWith(".amr")) {
+      const maxSize = 4.5 * 1024 * 1024; // 4.5 MB
+      if (file.size > maxSize) {
+        setError(`File "${file.name}" berukuran ${(file.size / (1024 * 1024)).toFixed(2)} MB, melebihi batas maksimal upload langsung 4.5MB. Silakan gunakan menu 'Gunakan Link Google Drive' agar pemrosesan file besar berjalan lancar.`);
+        setSelectedFile(null);
+        setAudioUrl(null);
+        setDetectedDuration(null);
+        return;
+      }
       setSelectedFile(file);
       const url = URL.createObjectURL(file);
       setAudioUrl(url);
@@ -189,8 +197,16 @@ export default function App() {
 
       recorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        setRecordedBlob(audioBlob);
-        setRecordedUrl(URL.createObjectURL(audioBlob));
+        const maxSize = 4.5 * 1024 * 1024; // 4.5 MB
+        if (audioBlob.size > maxSize) {
+          setError(`File rekaman mikrofon berukuran ${(audioBlob.size / (1024 * 1024)).toFixed(2)} MB, melebihi batas maksimal 4.5MB. Silakan rekam dalam durasi lebih singkat, atau unggah rekaman audio rapat Anda ke Google Drive lalu gunakan menu 'Gunakan Link Google Drive'.`);
+          setRecordedBlob(null);
+          setRecordedUrl(null);
+        } else {
+          setRecordedBlob(audioBlob);
+          setRecordedUrl(URL.createObjectURL(audioBlob));
+          setError(null);
+        }
         stream.getTracks().forEach((track) => track.stop());
       };
 
@@ -321,6 +337,14 @@ export default function App() {
       const fileToProcess = inputMethod === "upload" ? selectedFile : recordedBlob;
       if (!fileToProcess) {
         setError("Silakan pilih atau rekam audio terlebih dahulu.");
+        return;
+      }
+      const maxSize = 4.5 * 1024 * 1024; // 4.5 MB in bytes
+      if (fileToProcess.size > maxSize) {
+        setError(inputMethod === "upload" 
+          ? `File "${selectedFile?.name || "audio"}" berukuran ${(fileToProcess.size / (1024 * 1024)).toFixed(2)} MB, melebihi batas maksimal upload langsung 4.5MB. Silakan gunakan menu 'Gunakan Link Google Drive' agar pemrosesan file besar berjalan lancar.`
+          : `File rekaman mikrofon berukuran ${(fileToProcess.size / (1024 * 1024)).toFixed(2)} MB, melebihi batas maksimal 4.5MB. Silakan rekam lebih singkat atau gunakan menu 'Gunakan Link Google Drive'.`
+        );
         return;
       }
     }
@@ -745,6 +769,22 @@ from docx.oxml.ns import nsdecls, qn
 
             {/* Content Area */}
             <div className="p-5">
+              {error && (
+                <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 flex items-start gap-2.5 shadow-sm">
+                  <AlertCircle className="h-4.5 w-4.5 text-rose-600 mt-0.5 shrink-0" />
+                  <div className="flex-1 text-xs leading-relaxed font-semibold">
+                    {error}
+                  </div>
+                  <button 
+                    onClick={() => setError(null)}
+                    className="text-stone-400 hover:text-stone-800 font-bold text-sm shrink-0 px-1 hover:bg-stone-150 rounded"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {inputMethod === "upload" ? (
                 <div className="flex flex-col gap-4">
                   {/* Sub-tabs for file upload vs drive link */}
@@ -858,7 +898,7 @@ from docx.oxml.ns import nsdecls, qn
                         {selectedFile ? selectedFile.name : "Pilih atau Seret File Rekaman"}
                       </h3>
                       <p className="text-stone-500 text-xs mt-1 max-w-xs">
-                        Mendukung format WAV, MP3, M4A, AAC, dll. Maksimal ukuran file 50MB.
+                        Mendukung format WAV, MP3, M4A, AAC, dll. <strong className="text-red-600 font-bold">Maksimal file upload 4.5MB</strong>. (Gunakan menu Google Drive di atas untuk file besar).
                       </p>
                       {selectedFile && (
                         <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
@@ -922,7 +962,7 @@ from docx.oxml.ns import nsdecls, qn
                           {recordedBlob ? "Hasil Rekaman Siap" : "Mulai Rekam Suara Langsung"}
                         </h3>
                         <p className="text-stone-500 text-xs mt-1">
-                          Klik tombol di atas untuk merekam menggunakan mikrofon laptop/PC.
+                          Klik tombol di atas untuk merekam menggunakan mikrofon laptop/PC. <strong className="text-red-600 font-bold block mt-1">Maksimal ukuran file rekaman 4.5MB</strong>.
                         </p>
                       </div>
                     </div>
@@ -1084,9 +1124,25 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
               {/* Process Button */}
               <button
                 onClick={handleProcessAudio}
-                disabled={isProcessing || (inputMethod === "points" ? !summaryPoints.trim() : (!selectedFile && !recordedBlob))}
+                disabled={
+                  isProcessing || 
+                  (inputMethod === "points" 
+                    ? !summaryPoints.trim() 
+                    : (inputMethod === "upload" && uploadSource === "drive"
+                        ? !driveUrl.trim()
+                        : (inputMethod === "upload" ? !selectedFile : !recordedBlob)
+                      )
+                  )
+                }
                 className={`w-full mt-5 py-3 px-4 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-2.5 transition-all ${
-                  isProcessing || (inputMethod === "points" ? !summaryPoints.trim() : (!selectedFile && !recordedBlob))
+                  isProcessing || 
+                  (inputMethod === "points" 
+                    ? !summaryPoints.trim() 
+                    : (inputMethod === "upload" && uploadSource === "drive"
+                        ? !driveUrl.trim()
+                        : (inputMethod === "upload" ? !selectedFile : !recordedBlob)
+                      )
+                  )
                     ? "bg-stone-200 text-stone-400 cursor-not-allowed shadow-none"
                     : "bg-[#064e3b] hover:bg-[#043d2e] shadow-lg shadow-emerald-900/20 active:scale-[0.98]"
                 }`}
