@@ -532,7 +532,8 @@ export default function App() {
       setProgressMessage("Draf notulensi dinas berhasil diselesaikan!");
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      setResultMarkdown(data.result);
+      const cleanResult = data.result ? data.result.replace(/\*/g, "") : "";
+      setResultMarkdown(cleanResult);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Terjadi kesalahan saat memproses audio rapat dinas.");
@@ -632,10 +633,13 @@ from docx.oxml.ns import nsdecls, qn
     let tglEfektif = "02/05/2018";
     let hariTanggal = ".....................";
     let tempat = "Ruang Rapat Pengadilan Agama Paniai";
-    let pimpinan = ".....................";
+    let pimpinan = "Ahmad Muhtar, S.H.I";
     let peserta = ".....................";
     let agendaContent: string[] = [];
     let kesimpulanContent: string[] = [];
+    let notulen = "Idris Al Basyir, A.Md";
+    let nipPimpinan = "198112122009121004";
+    let nipNotulen = "199601112025061004";
 
     let isAgenda = false;
     let isKesimpulan = false;
@@ -647,7 +651,10 @@ from docx.oxml.ns import nsdecls, qn
       } else if (trimmed.startsWith("Tempat")) {
         tempat = trimmed.split(":")[1]?.trim() || tempat;
       } else if (trimmed.startsWith("Pimpinan Rapat")) {
-        pimpinan = trimmed.split(":")[1]?.trim() || pimpinan;
+        const val = trimmed.split(":")[1]?.trim();
+        if (val && val !== "[Isi nama pimpinan dari audio/perintah user]" && !val.includes("Isi nama pimpinan")) {
+          pimpinan = val;
+        }
       } else if (trimmed.startsWith("Peserta Rapat")) {
         peserta = trimmed.split(":")[1]?.trim() || peserta;
       } else if (trimmed.toLowerCase().includes("agenda rapat")) {
@@ -668,6 +675,49 @@ from docx.oxml.ns import nsdecls, qn
       }
     });
 
+    // Post-parse names & NIPs if they exist at the bottom
+    let signatureStart = false;
+    const signatureLines: string[] = [];
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+        signatureStart = true;
+      }
+      if (signatureStart) {
+        signatureLines.push(line);
+      }
+    });
+
+    if (signatureLines.length > 0) {
+      const nameLines = signatureLines.filter(l => {
+        const t = l.trim();
+        return t && !t.startsWith("Mengetahui") && !t.includes("Pimpinan Rapat") && !t.includes("Notulen Rapat") && !t.includes("NIP.");
+      });
+      if (nameLines.length >= 1) {
+        const parts = nameLines[0].split(/\s{3,}/);
+        if (parts[0]) {
+          const val = parts[0].replace(/[\[\]]/g, "").trim();
+          if (val && val !== "[Nama Pimpinan Rapat]" && !val.includes("Nama Pimpinan")) pimpinan = val;
+        }
+        if (parts[1]) {
+          const val = parts[1].replace(/[\[\]]/g, "").trim();
+          if (val && val !== "[Nama Notulen Rapat]" && !val.includes("Nama Notulen")) notulen = val;
+        }
+      }
+      const nipLines = signatureLines.filter(l => l.includes("NIP."));
+      if (nipLines.length >= 1) {
+        const parts = nipLines[0].split(/\s{3,}/);
+        if (parts[0]) {
+          const val = parts[0].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
+          if (val && val !== "[NIP Pimpinan]" && !val.includes("NIP Pimpinan")) nipPimpinan = val;
+        }
+        if (parts[1]) {
+          const val = parts[1].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
+          if (val && val !== "[NIP Notulen]" && !val.includes("NIP Notulen")) nipNotulen = val;
+        }
+      }
+    }
+
     return {
       tglPembuatan,
       tglRevisi,
@@ -678,6 +728,9 @@ from docx.oxml.ns import nsdecls, qn
       peserta,
       agendaContent,
       kesimpulanContent,
+      notulen,
+      nipPimpinan,
+      nipNotulen
     };
   };
 
@@ -1335,17 +1388,17 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
                   </button>
                 </div>
               ) : resultMarkdown && docMetadata ? (
-                /* Beautiful Paper Layout with Real-time styling */
-                <div className="bg-white shadow-md border border-stone-100 rounded-sm max-w-2xl mx-auto w-full p-8 md:p-12 font-serif text-stone-800 leading-relaxed relative select-text min-h-[850px]">
+                /* Beautiful Paper Layout with Real-time styling matching the provided image */
+                <div className="bg-white shadow-md border border-stone-200 rounded-sm max-w-2xl mx-auto w-full p-6 md:p-10 font-serif text-stone-900 leading-relaxed relative select-text min-h-[950px]">
                   {/* Watermark Crest (Styled subtly) */}
                   <div className="absolute inset-0 opacity-[0.015] flex items-center justify-center pointer-events-none">
                     <Scale className="h-96 w-96 text-stone-900" />
                   </div>
 
                   {/* COP SURAT */}
-                  <div className="text-center border-b-[3px] border-double border-stone-800 pb-3 mb-5">
+                  <div className="text-center pb-2 mb-4">
                     <img 
-                      src="/kop surat.png" 
+                      src="/api/kop-surat" 
                       alt="Kop Surat Pengadilan Agama Paniai" 
                       className="w-full h-auto max-h-[140px] mx-auto object-contain block"
                       referrerPolicy="no-referrer"
@@ -1358,7 +1411,7 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
                         }
                       }}
                     />
-                    <div id="cop-surat-text-fallback" className="hidden">
+                    <div id="cop-surat-text-fallback" className="hidden border-b-[3px] border-double border-stone-800 pb-3">
                       <h2 className="text-sm md:text-base font-bold tracking-wide text-stone-900 uppercase">
                         Mahkamah Agung Republik Indonesia
                       </h2>
@@ -1380,112 +1433,132 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
                     </div>
                   </div>
 
-                  {/* NOTULEN RAPAT TITLE */}
-                  <div className="text-center mb-5">
-                    <h2 className="text-base md:text-lg font-bold tracking-widest text-stone-900 uppercase decoration-double">
-                      NOTULEN RAPAT
-                    </h2>
-                  </div>
+                  {/* Unified spreadsheet-like table matching the screenshot */}
+                  <table className="w-full border-collapse border-[1.5px] border-stone-800 text-xs md:text-sm font-sans">
+                    <tbody>
+                      {/* Title Row */}
+                      <tr className="border-b-[1.5px] border-stone-800">
+                        <td colSpan={4} className="p-3 text-center bg-white font-serif font-bold">
+                          <h2 className="text-sm md:text-base font-bold tracking-widest text-stone-900 uppercase">
+                            NOTULEN RAPAT
+                          </h2>
+                        </td>
+                      </tr>
 
-                  {/* KODE DOKUMEN TABLE */}
-                  <div className="mb-6 font-sans text-[10px] md:text-xs">
-                    <table className="w-full border-collapse border border-stone-800">
-                      <thead>
-                        <tr className="bg-stone-50 text-stone-900 font-semibold">
-                          <th className="border border-stone-800 p-2 text-center">Kode Dokumen</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Pembuatan</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Revisi</th>
-                          <th className="border border-stone-800 p-2 text-center">Tgl. Efektif</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="text-stone-800 text-center">
-                          <td className="border border-stone-800 p-2">FM/AM/04/02</td>
-                          <td className="border border-stone-800 p-2">02/05/2018</td>
-                          <td className="border border-stone-800 p-2">{docMetadata.tglRevisi}</td>
-                          <td className="border border-stone-800 p-2">02/05/2018</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+                      {/* Metadata Table Headers */}
+                      <tr className="border-b border-stone-800 text-stone-900 font-bold text-center text-[10px] md:text-xs bg-stone-50/50">
+                        <td className="border-r border-stone-800 p-2 w-[25%]">Kode Dokumen</td>
+                        <td className="border-r border-stone-800 p-2 w-[25%]">Tgl. Pembuatan</td>
+                        <td className="border-r border-stone-800 p-2 w-[25%]">Tgl. Revisi</td>
+                        <td className="p-2 w-[25%]">Tgl. Efektif</td>
+                      </tr>
 
-                  {/* METADATA LIST */}
-                  <div className="space-y-2 mb-6 text-xs md:text-sm">
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Hari/Tanggal/Jam</span>
-                      <span className="col-span-8">: {docMetadata.hariTanggal}</span>
-                    </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Tempat</span>
-                      <span className="col-span-8">: {docMetadata.tempat}</span>
-                    </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Pimpinan Rapat</span>
-                      <span className="col-span-8">: {docMetadata.pimpinan}</span>
-                    </div>
-                    <div className="grid grid-cols-12 gap-1">
-                      <span className="col-span-4 font-bold">Peserta Rapat</span>
-                      <span className="col-span-8">: {docMetadata.peserta}</span>
-                    </div>
-                  </div>
+                      {/* Metadata Table Values */}
+                      <tr className="border-b-[1.5px] border-stone-800 text-stone-800 text-center text-[10px] md:text-xs">
+                        <td className="border-r border-stone-800 p-2">FM/AM/04/02</td>
+                        <td className="border-r border-stone-800 p-2">02/05/2018</td>
+                        <td className="border-r border-stone-800 p-2">{docMetadata.tglRevisi}</td>
+                        <td className="p-2">02/05/2018</td>
+                      </tr>
 
-                  <hr className="border-t border-stone-800 my-4" />
+                      {/* Detail Row: Hari/Tanggal/Jam */}
+                      <tr className="border-b border-stone-800">
+                        <td className="border-r border-stone-800 p-2.5 font-bold bg-stone-50/30 text-left w-[25%]">Hari/Tanggal/Jam</td>
+                        <td colSpan={3} className="p-2.5 text-left text-stone-900 font-serif">{docMetadata.hariTanggal}</td>
+                      </tr>
 
-                  {/* AGENDA RAPAT */}
-                  <div className="mb-6">
-                    <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
-                      Agenda Rapat
-                    </h3>
-                    <div className="text-xs md:text-sm space-y-2 pl-2">
-                      {docMetadata.agendaContent.map((point, index) => {
-                        // Check if it matches opening sentences or numeric points
-                        const isHeading = point.includes("Rapat dibuka") || point.includes("Selanjutnya rapat dipimpin");
-                        return (
-                          <p key={index} className={`${isHeading ? "" : "pl-4"} text-stone-900`}>
-                            {point}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </div>
+                      {/* Detail Row: Tempat */}
+                      <tr className="border-b border-stone-800">
+                        <td className="border-r border-stone-800 p-2.5 font-bold bg-stone-50/30 text-left">Tempat</td>
+                        <td colSpan={3} className="p-2.5 text-left text-stone-900 font-serif">{docMetadata.tempat}</td>
+                      </tr>
 
-                  <hr className="border-t border-stone-800 my-4" />
+                      {/* Detail Row: Pimpinan Rapat */}
+                      <tr className="border-b border-stone-800">
+                        <td className="border-r border-stone-800 p-2.5 font-bold bg-stone-50/30 text-left">Pimpinan Rapat</td>
+                        <td colSpan={3} className="p-2.5 text-left text-stone-900 font-serif font-bold">{docMetadata.pimpinan}</td>
+                      </tr>
 
-                  {/* KESIMPULAN RAPAT */}
-                  <div className="mb-6">
-                    <h3 className="text-center font-bold text-xs md:text-sm uppercase tracking-wider mb-3">
-                      Kesimpulan / Keputusan Rapat
-                    </h3>
-                    <div className="text-xs md:text-sm space-y-2 pl-2">
-                      {docMetadata.kesimpulanContent.map((point, index) => {
-                        const isClosing = point.includes("rapat menutup") || point.includes("ALHAMDULILLAHI");
-                        return (
-                          <p key={index} className={`${isClosing ? "" : "pl-4"} text-stone-900`}>
-                            {point}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </div>
+                      {/* Detail Row: Peserta Rapat */}
+                      <tr className="border-b-[1.5px] border-stone-800">
+                        <td className="border-r border-stone-800 p-2.5 font-bold bg-stone-50/30 text-left">Peserta Rapat</td>
+                        <td colSpan={3} className="p-2.5 text-left text-stone-900 font-serif">{docMetadata.peserta}</td>
+                      </tr>
 
-                  <hr className="border-t border-stone-800 my-5" />
+                      {/* Centered Agenda Rapat Header */}
+                      <tr className="border-b-[1.5px] border-stone-800 bg-stone-50/50 text-stone-900 font-bold text-center">
+                        <td colSpan={4} className="p-2.5 uppercase tracking-wider text-xs font-bold font-serif">
+                          Agenda Rapat
+                        </td>
+                      </tr>
 
-                  {/* SIGNATURES SECTION */}
-                  <div className="text-xs md:text-sm">
-                    <p className="mb-4">Mengetahui,</p>
-                    <div className="grid grid-cols-2 gap-8 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className="font-bold">Pimpinan Rapat</span>
-                        <span className="mt-16 font-bold">{docMetadata.pimpinan.split(" (")[0]}</span>
-                        <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <span className="font-bold">Notulen Rapat</span>
-                        <span className="mt-16 font-bold">Notulen Pengadilan</span>
-                        <span className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. .....................</span>
-                      </div>
-                    </div>
-                  </div>
+                      {/* Large Box: All discussions, agenda points & conclusions */}
+                      <tr className="border-b-[1.5px] border-stone-800">
+                        <td colSpan={4} className="p-5 text-left bg-white font-serif leading-relaxed">
+                          <div className="space-y-4 text-xs md:text-sm text-stone-900">
+                            {docMetadata.agendaContent.map((point, index) => {
+                              const isHeading = point.includes("Rapat dibuka") || point.includes("Selanjutnya rapat dipimpin");
+                              return (
+                                <p key={`ag-${index}`} className={`${isHeading ? "" : "pl-5"} text-stone-900`}>
+                                  {point}
+                                </p>
+                              );
+                            })}
+
+                            {docMetadata.kesimpulanContent.length > 0 && (
+                              <>
+                                <p className="pt-3 font-semibold text-stone-900">
+                                  Selanjutnya kesimpulan rapat sebagai berikut:
+                                </p>
+                                <div className="space-y-2">
+                                  {docMetadata.kesimpulanContent.map((point, index) => {
+                                    const isClosing = point.includes("rapat menutup") || point.includes("ALHAMDULILLAHI") || point.includes("Alhamdulillah");
+                                    if (point.toLowerCase().includes("kesimpulan rapat sebagai berikut")) return null;
+                                    return (
+                                      <p key={`kes-${index}`} className={`${isClosing ? "" : "pl-5"} text-stone-900`}>
+                                        {point}
+                                      </p>
+                                    );
+                                  })}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Signatures Table Cells */}
+                      <tr className="text-stone-900 text-xs md:text-sm">
+                        {/* Pimpinan Signature */}
+                        <td colSpan={2} className="border-r border-stone-800 p-5 text-left vertical-top w-1/2 align-top">
+                          <div className="flex flex-col justify-between h-36">
+                            <div>
+                              <p className="font-semibold">Mengetahui,</p>
+                              <p className="font-semibold">Pimpinan Rapat</p>
+                            </div>
+                            <div className="mt-12">
+                              <p className="font-bold underline text-stone-950 font-serif">{docMetadata.pimpinan.split(" (")[0]}</p>
+                              <p className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. {docMetadata.nipPimpinan}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Scribe Signature */}
+                        <td colSpan={2} className="p-5 text-left vertical-top w-1/2 align-top">
+                          <div className="flex flex-col justify-between h-36">
+                            <div>
+                              <p className="font-semibold">&nbsp;</p>
+                              <p className="font-semibold">Notulen Rapat</p>
+                            </div>
+                            <div className="mt-12">
+                              <p className="font-bold underline text-stone-950 font-serif">{docMetadata.notulen}</p>
+                              <p className="text-[10px] md:text-xs font-sans text-stone-600 mt-1">NIP. {docMetadata.nipNotulen}</p>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 /* Empty / Idle State */

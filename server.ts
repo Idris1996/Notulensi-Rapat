@@ -109,10 +109,10 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
   const lines = markdown.split("\n");
 
   // Default values
-  let pimpinanRapat = "Pimpinan Rapat/Ketua";
-  let notulenRapat = "Sekretaris/Notulen";
-  let nipPimpinan = ".....................";
-  let nipNotulen = ".....................";
+  let pimpinanRapat = "Ahmad Muhtar, S.H.I";
+  let notulenRapat = "Idris Al Basyir, A.Md";
+  let nipPimpinan = "198112122009121004";
+  let nipNotulen = "199601112025061004";
   let hariTanggalJam = ".....................";
   let tempat = "Ruang Rapat Pengadilan Agama Paniai";
   let agendaRows: string[] = [];
@@ -739,6 +739,10 @@ app.post("/api/validate-drive-link", async (req, res) => {
   }
 });
 
+app.get("/api/kop-surat", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "kop surat.png"));
+});
+
 // Endpoint to stream/proxy file content from Google Drive to avoid CORS or antivirus page issues
 app.get("/api/stream-drive", async (req, res) => {
   const fileId = req.query.id as string;
@@ -962,11 +966,15 @@ app.post("/api/process-audio", (req, res, next) => {
     const promptText = `
 Anda adalah seorang Notulen Rapat Profesional di Pengadilan Agama Paniai. Tugas utama Anda adalah menyusun Notulensi Rapat Dinas yang EKSAT dan FAKTUAL berdasarkan file audio yang diunggah.
 
-ATURAN KETAT (ANTI-HALUSINASI):
+ATURAN KETAT (FORMAT & ANTI-HALUSINASI):
 1. HANYA tulis informasi yang benar-benar diucapkan atau disebutkan di dalam rekaman audio.
 2. JANGAN PERNAH menambahkan asumsi, kesimpulan logis sendiri, atau mengarang cerita/agenda yang tidak ada di dalam audio.
-3. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
-4. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
+3. JANGAN gunakan karakter asterisk/bintang (* atau **) untuk menebalkan (bolding) kata atau untuk hal lain apa pun di seluruh dokumen. Tulis semuanya polos tanpa tanda bintang sama sekali.
+4. Jika ada bagian format yang datanya tidak disebutkan di dalam audio (misalnya nama pimpinan atau jumlah peserta), tulis "Tidak disebutkan dalam rekaman" atau isi HANYA berdasarkan data tambahan yang diberikan oleh User pada kolom chat.
+5. Gunakan nama-nama pejabat Pengadilan Agama Paniai berikut sebagai default jika tidak ada nama pimpinan/notulen lain yang disebutkan di dalam rapat atau instruksi user:
+   - Pimpinan Rapat: Ahmad Muhtar, S.H.I (NIP. 198112122009121004)
+   - Notulen Rapat: Idris Al Basyir, A.Md (NIP. 199601112025061004)
+6. Tetap gunakan gaya bahasa formal (EYD V) untuk merangkum kalimat yang diucapkan pembicara, tanpa mengubah inti faktanya.
 
 Hasilkan output menggunakan format Markdown berikut:
 
@@ -986,7 +994,7 @@ www.pa-paniai.go.id, pengadilan.agama.paniai@gmail.com
 
 Hari/Tanggal/Jam : [Isi hanya jika ada di audio/perintah user, jika tidak tulis: Tidak disebutkan]
 Tempat           : Ruang Rapat Pengadilan Agama Paniai
-Pimpinan Rapat   : [Isi nama pimpinan dari audio/perintah user]
+Pimpinan Rapat   : Ahmad Muhtar, S.H.I
 Peserta Rapat    : [Isi jumlah peserta] Orang
 
 --------------------------------------------------------------------------------
@@ -1006,8 +1014,8 @@ Mengetahui,
 Pimpinan Rapat                                        Notulen Rapat
 
 
-[Nama Pimpinan Rapat]                                 [Nama Notulen Rapat]
-NIP. [NIP Pimpinan]                                   NIP. [NIP Notulen]
+Ahmad Muhtar, S.H.I                                 Idris Al Basyir, A.Md
+NIP. 198112122009121004                             NIP. 199601112025061004
 `;
 
     let finalPrompt = promptText;
