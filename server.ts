@@ -69,41 +69,68 @@ function getGeminiClient(): GoogleGenAI {
   return aiClient;
 }
 
-// Helper for docx table cell with vertical alignment and styling
-function createStyledCell(text: string, isHeader = false, widthPct = 25): TableCell {
+// Helper for docx table cell with custom alignments, colspans, shading, and padding
+interface CreateCellOptions {
+  text?: string;
+  paragraphs?: Paragraph[];
+  bold?: boolean;
+  isHeader?: boolean;
+  alignment?: any;
+  widthPct?: number;
+  columnSpan?: number;
+  shadingColor?: string;
+  fontName?: string;
+  fontSize?: number;
+}
+
+function createCell({
+  text,
+  paragraphs,
+  bold = false,
+  isHeader = false,
+  alignment = AlignmentType.CENTER,
+  widthPct = 25,
+  columnSpan = 1,
+  shadingColor = undefined,
+  fontName = "Arial",
+  fontSize = 20,
+}: CreateCellOptions): TableCell {
+  const childrenParagraphs = paragraphs || [
+    new Paragraph({
+      alignment,
+      children: [
+        new TextRun({
+          text: text || "",
+          bold: bold || isHeader,
+          font: fontName,
+          size: fontSize,
+        }),
+      ],
+    }),
+  ];
+
   return new TableCell({
-    children: [
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [
-          new TextRun({
-            text,
-            bold: isHeader,
-            font: "Arial",
-            size: 20, // 10pt
-          }),
-        ],
-      }),
-    ],
+    children: childrenParagraphs,
+    columnSpan,
     width: {
       size: widthPct,
       type: WidthType.PERCENTAGE,
     },
-    shading: isHeader
+    shading: shadingColor || isHeader
       ? {
-          fill: "F2F2F2",
+          fill: shadingColor || "F2F2F2",
         }
       : undefined,
     margins: {
-      top: 100,
-      bottom: 100,
-      left: 150,
-      right: 150,
+      top: 140,
+      bottom: 140,
+      left: 180,
+      right: 180,
     },
   });
 }
 
-// Function to convert Markdown to a professional DOCX Document
+// Function to convert Markdown to a professional DOCX Document with high-fidelity layout
 async function generateDocxBuffer(markdown: string): Promise<Buffer> {
   // Parse the markdown lines and extract details
   const lines = markdown.split("\n");
@@ -116,8 +143,8 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
   let hariTanggalJam = ".....................";
   let tempat = "Ruang Rapat Pengadilan Agama Paniai";
   let agendaRows: string[] = [];
-  let kesimpulanRows: string[] = [];
-  let state: "none" | "agenda" | "kesimpulan" = "none";
+
+  let isAgenda = false;
 
   // Quick extract patterns
   for (const line of lines) {
@@ -127,67 +154,74 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
     } else if (trimmed.startsWith("Tempat")) {
       tempat = trimmed.split(":")[1]?.trim() || tempat;
     } else if (trimmed.startsWith("Pimpinan Rapat")) {
-      pimpinanRapat = trimmed.split(":")[1]?.trim() || pimpinanRapat;
-    } else if (trimmed.includes("NIP.") || trimmed.toLowerCase().includes("nip")) {
-      // Try to find NIPs
-      const match = trimmed.match(/NIP\.\s*([\d\s\.\-]+)/gi);
-      if (match) {
-        // Just extract the numeric/text part
-        // We'll parse signature names and NIPs in a separate pass or keep them default
+      const val = trimmed.split(":")[1]?.trim();
+      if (val && val !== "[Isi nama pimpinan dari audio/perintah user]" && !val.includes("Isi nama pimpinan")) {
+        pimpinanRapat = val;
       }
     }
 
-    // Capture sections
     if (trimmed.toLowerCase().includes("agenda rapat")) {
-      state = "agenda";
+      isAgenda = true;
       continue;
-    } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut")) {
-      state = "kesimpulan";
-      continue;
-    } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui")) {
-      state = "none";
+    } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+      if (isAgenda) {
+        isAgenda = false;
+      }
     }
 
-    if (state === "agenda") {
-      if (trimmed && !trimmed.toLowerCase().includes("agenda rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
-        agendaRows.push(trimmed);
-      }
-    } else if (state === "kesimpulan") {
-      if (trimmed && !trimmed.toLowerCase().includes("kesimpulan rapat") && !trimmed.startsWith("-") && !trimmed.startsWith("=")) {
-        kesimpulanRows.push(trimmed);
-      }
+    if (isAgenda) {
+      agendaRows.push(line); // Preserve raw line to keep structure
     }
   }
 
-  // Double check signatures block
-  // Let's find the names at the bottom of markdown
-  const lastNonEmpty = lines.filter(l => l.trim()).slice(-10);
-  // Look for signature lines
-  let signatureLineIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().startsWith("Mengetahui") || lines[i].trim().includes("Pimpinan Rapat") && lines[i].trim().includes("Notulen Rapat")) {
-      signatureLineIndex = i;
+  // Parse signatures from bottom if they exist
+  let signatureStart = false;
+  const signatureLines: string[] = [];
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+      signatureStart = true;
     }
-  }
+    if (signatureStart) {
+      signatureLines.push(line);
+    }
+  });
 
-  if (signatureLineIndex !== -1) {
-    // Look at the lines following signature index
-    const sigLines = lines.slice(signatureLineIndex).filter(l => l.trim());
-    // Generally the names are 2-3 lines below "Pimpinan Rapat"
-    // Let's parse the names and NIPs directly
-    // Look for lines like: "[Nama Pimpinan]    [Nama Notulen]" or names without NIP.
-    const nameLines = sigLines.filter(l => l.trim() && !l.includes("Mengetahui") && !l.includes("Pimpinan Rapat") && !l.includes("Notulen Rapat") && !l.includes("NIP"));
+  if (signatureLines.length > 0) {
+    const nameLines = signatureLines.filter(l => {
+      const t = l.trim();
+      return t && !t.startsWith("Mengetahui") && !t.includes("Pimpinan Rapat") && !t.includes("Notulen Rapat") && !t.includes("NIP.");
+    });
     if (nameLines.length >= 1) {
-      const parts = nameLines[0].split(/\s{3,}/); // Split by 3 or more spaces
-      if (parts[0]) pimpinanRapat = parts[0].replace(/[\[\]]/g, "").trim();
-      if (parts[1]) notulenRapat = parts[1].replace(/[\[\]]/g, "").trim();
+      const parts = nameLines[0].split(/\s{3,}/);
+      if (parts[0]) {
+        const val = parts[0].replace(/[\[\]]/g, "").trim();
+        if (val && val !== "[Nama Pimpinan Rapat]" && !val.includes("Nama Pimpinan")) pimpinanRapat = val;
+      }
+      if (parts[1]) {
+        const val = parts[1].replace(/[\[\]]/g, "").trim();
+        if (val && val !== "[Nama Notulen Rapat]" && !val.includes("Nama Notulen")) notulenRapat = val;
+      }
     }
-    const nipLines = sigLines.filter(l => l.includes("NIP."));
+    const nipLines = signatureLines.filter(l => l.includes("NIP."));
     if (nipLines.length >= 1) {
       const parts = nipLines[0].split(/\s{3,}/);
-      if (parts[0]) nipPimpinan = parts[0].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
-      if (parts[1]) nipNotulen = parts[1].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
+      if (parts[0]) {
+        const val = parts[0].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
+        if (val && val !== "[NIP Pimpinan]" && !val.includes("NIP Pimpinan")) nipPimpinan = val;
+      }
+      if (parts[1]) {
+        const val = parts[1].replace(/NIP\.\s*/gi, "").replace(/[\[\]]/g, "").trim();
+        if (val && val !== "[NIP Notulen]" && !val.includes("NIP Notulen")) nipNotulen = val;
+      }
     }
+  }
+
+  // Extract peserta count or line
+  let pesertaLine = ".....................";
+  const pLine = lines.find(l => l.includes("Peserta Rapat"));
+  if (pLine) {
+    pesertaLine = pLine.split(":")[1]?.trim() || pesertaLine;
   }
 
   // Create document elements
@@ -297,253 +331,202 @@ async function generateDocxBuffer(markdown: string): Promise<Buffer> {
     })
   );
 
-  // --- METADATA TABLE ---
-  const metadataTable = new Table({
-    rows: [
-      new TableRow({
-        children: [
-          createStyledCell("Kode Dokumen", true),
-          createStyledCell("Tgl. Pembuatan", true),
-          createStyledCell("Tgl. Revisi", true),
-          createStyledCell("Tgl. Efektif", true),
-        ],
-      }),
-      new TableRow({
-        children: [
-          createStyledCell("FM/AM/04/02"),
-          createStyledCell("02/05/2018"),
-          createStyledCell("....................."),
-          createStyledCell("02/05/2018"),
-        ],
-      }),
-    ],
-    width: {
-      size: 100,
-      type: WidthType.PERCENTAGE,
-    },
+  // --- BUILD THE UNIFIED SPREADSHEET TABLE ---
+  const tableRows: TableRow[] = [];
+
+  // Row 1: NOTULEN RAPAT
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({
+          text: "NOTULEN RAPAT",
+          bold: true,
+          fontSize: 24,
+          columnSpan: 4,
+          widthPct: 100,
+        }),
+      ],
+    })
+  );
+
+  // Row 2: Metadata Headers
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "Kode Dokumen", isHeader: true, bold: true, widthPct: 25 }),
+        createCell({ text: "Tgl. Pembuatan", isHeader: true, bold: true, widthPct: 25 }),
+        createCell({ text: "Tgl. Revisi", isHeader: true, bold: true, widthPct: 25 }),
+        createCell({ text: "Tgl. Efektif", isHeader: true, bold: true, widthPct: 25 }),
+      ],
+    })
+  );
+
+  // Row 3: Metadata Values
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "FM/AM/04/02", widthPct: 25 }),
+        createCell({ text: "02/05/2018", widthPct: 25 }),
+        createCell({ text: ".....................", widthPct: 25 }),
+        createCell({ text: "02/05/2018", widthPct: 25 }),
+      ],
+    })
+  );
+
+  // Row 4: Hari/Tanggal/Jam
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "Hari/Tanggal/Jam", bold: true, alignment: AlignmentType.LEFT, widthPct: 25, shadingColor: "F9F9F9" }),
+        createCell({ text: hariTanggalJam, alignment: AlignmentType.LEFT, columnSpan: 3, widthPct: 75 }),
+      ],
+    })
+  );
+
+  // Row 5: Tempat
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "Tempat", bold: true, alignment: AlignmentType.LEFT, widthPct: 25, shadingColor: "F9F9F9" }),
+        createCell({ text: tempat, alignment: AlignmentType.LEFT, columnSpan: 3, widthPct: 75 }),
+      ],
+    })
+  );
+
+  // Row 6: Pimpinan Rapat
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "Pimpinan Rapat", bold: true, alignment: AlignmentType.LEFT, widthPct: 25, shadingColor: "F9F9F9" }),
+        createCell({ text: pimpinanRapat, bold: true, alignment: AlignmentType.LEFT, columnSpan: 3, widthPct: 75 }),
+      ],
+    })
+  );
+
+  // Row 7: Peserta Rapat
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({ text: "Peserta Rapat", bold: true, alignment: AlignmentType.LEFT, widthPct: 25, shadingColor: "F9F9F9" }),
+        createCell({ text: pesertaLine, alignment: AlignmentType.LEFT, columnSpan: 3, widthPct: 75 }),
+      ],
+    })
+  );
+
+  // Row 8: Agenda Rapat Header
+  tableRows.push(
+    new TableRow({
+      children: [
+        createCell({
+          text: "Agenda Rapat",
+          bold: true,
+          isHeader: true,
+          fontSize: 22,
+          columnSpan: 4,
+          widthPct: 100,
+        }),
+      ],
+    })
+  );
+
+  // Row 9: Large Content Cell (The continuous body text)
+  const agendaParagraphs: Paragraph[] = [];
+  agendaRows.forEach((row) => {
+    const trimmed = row.trim();
+    if (!trimmed) {
+      agendaParagraphs.push(new Paragraph({ spacing: { before: 80, after: 80 } }));
+    } else {
+      const isListItem = /^\d+[\.\s]/.test(trimmed);
+      agendaParagraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: row,
+              font: "Arial",
+              size: 22,
+            }),
+          ],
+          indent: isListItem ? { left: 360 } : undefined, // Indent for items
+          spacing: { after: 120 },
+        })
+      );
+    }
   });
 
-  children.push(metadataTable);
-  children.push(new Paragraph({ spacing: { after: 200 } }));
-
-  // --- DETAILS ---
-  const addDetailLine = (label: string, value: string) => {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({ text: label.padEnd(20, " "), bold: true, font: "Arial", size: 22 }),
-          new TextRun({ text: `: ${value}`, font: "Arial", size: 22 }),
-        ],
-        spacing: { after: 100 },
-      })
-    );
-  };
-
-  addDetailLine("Hari/Tanggal/Jam", hariTanggalJam);
-  addDetailLine("Tempat", tempat);
-  addDetailLine("Pimpinan Rapat", pimpinanRapat);
-
-  // Find peserta count or raw line
-  let pesertaLine = ".....................";
-  const pLine = lines.find(l => l.includes("Peserta Rapat"));
-  if (pLine) {
-    pesertaLine = pLine.split(":")[1]?.trim() || pesertaLine;
-  }
-  addDetailLine("Peserta Rapat", pesertaLine);
-
-  children.push(
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: "------------------------------------------------------------------------------------------------------------------------",
-          color: "888888",
-        }),
-      ],
-      spacing: { before: 200, after: 200 },
-    })
-  );
-
-  // --- AGENDA RAPAT SECTION ---
-  children.push(
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({ text: "Agenda Rapat", bold: true, font: "Arial", size: 24 }),
-      ],
-      spacing: { after: 200 },
-    })
-  );
-
-  // Add agenda rows
-  if (agendaRows.length > 0) {
-    for (const row of agendaRows) {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({ text: row, font: "Arial", size: 22 }),
-          ],
-          spacing: { after: 100 },
-        })
-      );
-    }
-  } else {
-    // Default formatting if parsing failed or text matches the skeleton exactly
-    children.push(
+  // Fallback if empty
+  if (agendaParagraphs.length === 0) {
+    agendaParagraphs.push(
       new Paragraph({
         children: [
           new TextRun({
-            text: 'Rapat dibuka oleh Sekretaris PA Paniai dengan bersama-sama membaca "Bismillahirrahmanirrahim".',
-            font: "Arial",
-            size: 22,
-          }),
-        ],
-        spacing: { after: 100 },
-      }),
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: "Selanjutnya rapat dipimpin oleh Sekretaris Pengadilan Agama Paniai, Pembahasan Rapat dimulai dengan mendengarkan penyampaian dari masing-masing sub bagian.",
-            font: "Arial",
-            size: 22,
-          }),
-        ],
-        spacing: { after: 100 },
-      })
-    );
-  }
-
-  // --- KESIMPULAN RAPAT SECTION ---
-  children.push(
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: "------------------------------------------------------------------------------------------------------------------------",
-          color: "888888",
-        }),
-      ],
-      spacing: { before: 200, after: 200 },
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({ text: "Kesimpulan / Keputusan Rapat", bold: true, font: "Arial", size: 24 }),
-      ],
-      spacing: { after: 200 },
-    })
-  );
-
-  if (kesimpulanRows.length > 0) {
-    for (const row of kesimpulanRows) {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({ text: row, font: "Arial", size: 22 }),
-          ],
-          spacing: { after: 100 },
-        })
-      );
-    }
-  } else {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: "Belum ada kesimpulan rapat yang dimasukkan.",
+            text: "Belum ada agenda rapat yang dimasukkan.",
             font: "Arial",
             size: 22,
             italics: true,
           }),
         ],
-        spacing: { after: 100 },
       })
     );
   }
 
-  children.push(
-    new Paragraph({
+  tableRows.push(
+    new TableRow({
       children: [
-        new TextRun({
-          text: 'Selanjutnya pimpinan rapat menutup rapat selanjutnya rapat ditutup dengan ucapan "ALHAMDULILLAHIRABBIL\'ALAMIN".',
-          font: "Arial",
-          size: 22,
+        createCell({
+          paragraphs: agendaParagraphs,
+          alignment: AlignmentType.LEFT,
+          columnSpan: 4,
+          widthPct: 100,
         }),
       ],
-      spacing: { before: 200, after: 300 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: "------------------------------------------------------------------------------------------------------------------------",
-          color: "888888",
-        }),
-      ],
-      spacing: { after: 300 },
     })
   );
 
-  // --- SIGNATURES ---
-  children.push(
-    new Paragraph({
+  // Row 10: Signatures
+  const sigLeftParagraphs: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: "Mengetahui,", font: "Arial", size: 22 })] }),
+    new Paragraph({ children: [new TextRun({ text: "Pimpinan Rapat", font: "Arial", size: 22, bold: true })] }),
+    new Paragraph({ spacing: { before: 1200 } }), // gap
+    new Paragraph({ children: [new TextRun({ text: pimpinanRapat, font: "Arial", size: 22, bold: true, underline: {} })] }),
+    new Paragraph({ children: [new TextRun({ text: `NIP. ${nipPimpinan}`, font: "Arial", size: 20 })] }),
+  ];
+
+  const sigRightParagraphs: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: " ", font: "Arial", size: 22 })] }),
+    new Paragraph({ children: [new TextRun({ text: "Notulen Rapat", font: "Arial", size: 22, bold: true })] }),
+    new Paragraph({ spacing: { before: 1200 } }), // gap
+    new Paragraph({ children: [new TextRun({ text: notulenRapat, font: "Arial", size: 22, bold: true, underline: {} })] }),
+    new Paragraph({ children: [new TextRun({ text: `NIP. ${nipNotulen}`, font: "Arial", size: 20 })] }),
+  ];
+
+  tableRows.push(
+    new TableRow({
       children: [
-        new TextRun({ text: "Mengetahui,", font: "Arial", size: 22 }),
+        createCell({
+          paragraphs: sigLeftParagraphs,
+          alignment: AlignmentType.LEFT,
+          columnSpan: 2,
+          widthPct: 50,
+        }),
+        createCell({
+          paragraphs: sigRightParagraphs,
+          alignment: AlignmentType.LEFT,
+          columnSpan: 2,
+          widthPct: 50,
+        }),
       ],
-      spacing: { after: 100 },
     })
   );
 
-  // Signatures Table (borderless for perfect layout)
-  const signaturesTable = new Table({
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [
-              new Paragraph({
-                children: [new TextRun({ text: "Pimpinan Rapat", bold: true, font: "Arial", size: 22 })],
-              }),
-              new Paragraph({ spacing: { before: 1200 } }), // Signature gap
-              new Paragraph({
-                children: [new TextRun({ text: pimpinanRapat, bold: true, font: "Arial", size: 22 })],
-              }),
-              new Paragraph({
-                children: [new TextRun({ text: `NIP. ${nipPimpinan}`, font: "Arial", size: 20 })],
-              }),
-            ],
-            width: { size: 50, type: WidthType.PERCENTAGE },
-          }),
-          new TableCell({
-            children: [
-              new Paragraph({
-                children: [new TextRun({ text: "Notulen Rapat", bold: true, font: "Arial", size: 22 })],
-              }),
-              new Paragraph({ spacing: { before: 1200 } }), // Signature gap
-              new Paragraph({
-                children: [new TextRun({ text: notulenRapat, bold: true, font: "Arial", size: 22 })],
-              }),
-              new Paragraph({
-                children: [new TextRun({ text: `NIP. ${nipNotulen}`, font: "Arial", size: 20 })],
-              }),
-            ],
-            width: { size: 50, type: WidthType.PERCENTAGE },
-          }),
-        ],
-      }),
-    ],
+  const mainTable = new Table({
+    rows: tableRows,
     width: {
       size: 100,
       type: WidthType.PERCENTAGE,
     },
-    borders: {
-      top: { style: BorderStyle.NONE, size: 0, color: "auto" },
-      bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
-      left: { style: BorderStyle.NONE, size: 0, color: "auto" },
-      right: { style: BorderStyle.NONE, size: 0, color: "auto" },
-      insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "auto" },
-      insideVertical: { style: BorderStyle.NONE, size: 0, color: "auto" },
-    },
   });
 
-  children.push(signaturesTable);
+  children.push(mainTable);
 
   const doc = new Document({
     sections: [

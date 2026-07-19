@@ -636,13 +636,12 @@ from docx.oxml.ns import nsdecls, qn
     let pimpinan = "Ahmad Muhtar, S.H.I";
     let peserta = ".....................";
     let agendaContent: string[] = [];
-    let kesimpulanContent: string[] = [];
+    let kesimpulanContent: string[] = []; // empty, unified under agenda
     let notulen = "Idris Al Basyir, A.Md";
     let nipPimpinan = "198112122009121004";
     let nipNotulen = "199601112025061004";
 
     let isAgenda = false;
-    let isKesimpulan = false;
 
     lines.forEach((line) => {
       const trimmed = line.trim();
@@ -659,18 +658,13 @@ from docx.oxml.ns import nsdecls, qn
         peserta = trimmed.split(":")[1]?.trim() || peserta;
       } else if (trimmed.toLowerCase().includes("agenda rapat")) {
         isAgenda = true;
-        isKesimpulan = false;
-      } else if (trimmed.toLowerCase().includes("kesimpulan rapat") || trimmed.toLowerCase().includes("kesimpulan rapat sebagai berikut")) {
-        isAgenda = false;
-        isKesimpulan = true;
-      } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui")) {
-        isAgenda = false;
-        isKesimpulan = false;
+      } else if (trimmed.startsWith("---") || trimmed.startsWith("===") || trimmed.startsWith("Mengetahui") || (trimmed.includes("Pimpinan Rapat") && trimmed.includes("Notulen Rapat"))) {
+        if (isAgenda) {
+          isAgenda = false;
+        }
       } else {
-        if (isAgenda && trimmed) {
-          agendaContent.push(trimmed);
-        } else if (isKesimpulan && trimmed) {
-          kesimpulanContent.push(trimmed);
+        if (isAgenda) {
+          agendaContent.push(line); // Preserve line to retain line spacing & structure
         }
       }
     });
@@ -1495,34 +1489,19 @@ AI akan mengonversinya ke dalam format Tata Naskah Dinas resmi Mahkamah Agung ya
                       {/* Large Box: All discussions, agenda points & conclusions */}
                       <tr className="border-b-[1.5px] border-stone-800">
                         <td colSpan={4} className="p-5 text-left bg-white font-serif leading-relaxed">
-                          <div className="space-y-4 text-xs md:text-sm text-stone-900">
+                          <div className="space-y-2 text-xs md:text-sm text-stone-900 font-serif">
                             {docMetadata.agendaContent.map((point, index) => {
-                              const isHeading = point.includes("Rapat dibuka") || point.includes("Selanjutnya rapat dipimpin");
+                              const trimmed = point.trim();
+                              if (!trimmed) {
+                                return <div key={`empty-${index}`} className="h-2.5" />;
+                              }
+                              const isListItem = /^\d+[\.\s]/.test(trimmed);
                               return (
-                                <p key={`ag-${index}`} className={`${isHeading ? "" : "pl-5"} text-stone-900`}>
+                                <p key={`ag-${index}`} className={`${isListItem ? "pl-6" : ""} text-stone-900 leading-relaxed`}>
                                   {point}
                                 </p>
                               );
                             })}
-
-                            {docMetadata.kesimpulanContent.length > 0 && (
-                              <>
-                                <p className="pt-3 font-semibold text-stone-900">
-                                  Selanjutnya kesimpulan rapat sebagai berikut:
-                                </p>
-                                <div className="space-y-2">
-                                  {docMetadata.kesimpulanContent.map((point, index) => {
-                                    const isClosing = point.includes("rapat menutup") || point.includes("ALHAMDULILLAHI") || point.includes("Alhamdulillah");
-                                    if (point.toLowerCase().includes("kesimpulan rapat sebagai berikut")) return null;
-                                    return (
-                                      <p key={`kes-${index}`} className={`${isClosing ? "" : "pl-5"} text-stone-900`}>
-                                        {point}
-                                      </p>
-                                    );
-                                  })}
-                                </div>
-                              </>
-                            )}
                           </div>
                         </td>
                       </tr>
