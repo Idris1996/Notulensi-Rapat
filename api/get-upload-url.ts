@@ -6,9 +6,21 @@ export default async function handler(req: Request, res: Response) {
   }
 
   try {
-    const { fileSize, mimeType, displayName } = req.body;
-    if (!fileSize || !mimeType) {
-      return res.status(400).json({ error: "fileSize dan mimeType wajib disertakan." });
+    let { fileSize, mimeType, displayName } = req.body;
+    if (!fileSize) {
+      return res.status(400).json({ error: "fileSize wajib disertakan." });
+    }
+
+    let cleanMime = (mimeType || "").split(";")[0].trim().toLowerCase();
+    if (!cleanMime || cleanMime === "application/octet-stream" || cleanMime === "binary/octet-stream") {
+      const ext = (displayName || "").toLowerCase().split('.').pop();
+      if (ext === "m4a" || ext === "mp4") cleanMime = "audio/mp4";
+      else if (ext === "wav") cleanMime = "audio/wav";
+      else if (ext === "ogg" || ext === "opus") cleanMime = "audio/ogg";
+      else if (ext === "webm") cleanMime = "audio/webm";
+      else if (ext === "aac") cleanMime = "audio/aac";
+      else if (ext === "flac") cleanMime = "audio/flac";
+      else cleanMime = "audio/mpeg";
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -26,7 +38,7 @@ export default async function handler(req: Request, res: Response) {
           "X-Goog-Upload-Protocol": "resumable",
           "X-Goog-Upload-Command": "start",
           "X-Goog-Upload-Header-Content-Length": fileSize.toString(),
-          "X-Goog-Upload-Header-Content-Type": mimeType,
+          "X-Goog-Upload-Header-Content-Type": cleanMime,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({

@@ -48,6 +48,88 @@ function parseJsonBody(req: Request): Promise<any> {
   });
 }
 
+// Helper function to detect valid audio MIME types and prevent application/octet-stream errors
+function getMimeTypeFromFilename(filename: string): string | null {
+  if (!filename) return null;
+  const ext = filename.toLowerCase().split('.').pop() || "";
+  switch (ext) {
+    case 'mp3': return 'audio/mpeg';
+    case 'm4a': return 'audio/mp4';
+    case 'mp4': return 'audio/mp4';
+    case 'wav': return 'audio/wav';
+    case 'ogg': return 'audio/ogg';
+    case 'opus': return 'audio/opus';
+    case 'webm': return 'audio/webm';
+    case 'aac': return 'audio/aac';
+    case 'flac': return 'audio/flac';
+    case 'amr': return 'audio/amr';
+    case '3gp': return 'audio/3gpp';
+    case 'wma': return 'audio/x-ms-wma';
+    case 'm4v': return 'video/mp4';
+    case 'mov': return 'video/quicktime';
+    case 'mkv': return 'video/x-matroska';
+    default: return null;
+  }
+}
+
+function detectAudioMimeType(buffer?: Buffer, originalname?: string, headerMime?: string): string {
+  let cleanMime = (headerMime || "").split(";")[0].trim().toLowerCase();
+
+  // If headerMime is a valid specific audio/video MIME and not generic/octet-stream/html
+  if (
+    cleanMime &&
+    cleanMime !== "application/octet-stream" &&
+    cleanMime !== "binary/octet-stream" &&
+    cleanMime !== "application/x-zip-compressed" &&
+    !cleanMime.includes("text/html") &&
+    (cleanMime.startsWith("audio/") || cleanMime.startsWith("video/"))
+  ) {
+    if (cleanMime === "video/webm") return "audio/webm";
+    return cleanMime;
+  }
+
+  // Check filename extension
+  if (originalname) {
+    const extMime = getMimeTypeFromFilename(originalname);
+    if (extMime) return extMime;
+  }
+
+  // Check Buffer Magic Bytes (sniffing)
+  if (buffer && buffer.length >= 4) {
+    // ID3 header (MP3)
+    if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
+      return "audio/mpeg";
+    }
+    // MP3 Sync Word (0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2, 0xFF 0xE3)
+    if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) {
+      return "audio/mpeg";
+    }
+    // RIFF (WAV)
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+      return "audio/wav";
+    }
+    // Ogg (OGG/OPUS)
+    if (buffer[0] === 0x4F && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) {
+      return "audio/ogg";
+    }
+    // fLaC
+    if (buffer[0] === 0x66 && buffer[1] === 0x4C && buffer[2] === 0x61 && buffer[3] === 0x43) {
+      return "audio/flac";
+    }
+    // EBML (WEBM)
+    if (buffer[0] === 0x1A && buffer[1] === 0x45 && buffer[2] === 0xDF && buffer[3] === 0xA3) {
+      return "audio/webm";
+    }
+    // MP4 / M4A (ftyp at offset 4)
+    if (buffer.length >= 8 && buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
+      return "audio/mp4";
+    }
+  }
+
+  // Default fallback to audio/mpeg
+  return "audio/mpeg";
+}
+
 // Google Drive helper functions
 function extractGoogleDriveFileId(url: string): string | null {
   const fileDMatch = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
@@ -92,8 +174,8 @@ async function downloadGoogleDriveFile(fileId: string): Promise<{ buffer: Buffer
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   
-  mime = response.headers.get("content-type") || "audio/mpeg";
-  if (mime.includes("text/html")) {
+  const rawMime = response.headers.get("content-type") || "";
+  if (rawMime.includes("text/html")) {
     throw new Error("Gagal mengunduh berkas. Pastikan tautan Google Drive berstatus Publik (Siapa saja yang memiliki link dapat melihat) dan bukan berupa folder.");
   }
   
@@ -103,8 +185,10 @@ async function downloadGoogleDriveFile(fileId: string): Promise<{ buffer: Buffer
   if (filenameMatch) {
     originalname = filenameMatch[1];
   }
+
+  const detectedMime = detectAudioMimeType(buffer, originalname, rawMime);
   
-  return { buffer, mimeType: mime, originalname };
+  return { buffer, mimeType: detectedMime, originalname };
 }
 
 export default async function handler(req: Request, res: Response) {
@@ -144,15 +228,7 @@ export default async function handler(req: Request, res: Response) {
             }
             console.log(`Mengunduh berkas dari Google Drive dengan ID: ${fileId}...`);
             const driveFile = await downloadGoogleDriveFile(fileId);
-            mimeType = driveFile.mimeType;
-            
-            // Clean mimeType
-            if (mimeType.includes(";")) {
-              mimeType = mimeType.split(";")[0].trim();
-            }
-            if (mimeType === "video/webm") {
-              mimeType = "audio/webm";
-            }
+            mimeType = detectAudioMimeType(driveFile.buffer, driveFile.originalname, driveFile.mimeType);
             
             // If larger than 4MB, upload to Gemini File API
             if (driveFile.buffer.length > 4 * 1024 * 1024) {
@@ -214,7 +290,7 @@ export default async function handler(req: Request, res: Response) {
             }
           } else {
             fileUri = body.fileUri || "";
-            mimeType = body.mimeType || "";
+            mimeType = detectAudioMimeType(undefined, undefined, body.mimeType || "");
           }
         }
       } catch (parseErr: any) {
@@ -236,16 +312,7 @@ export default async function handler(req: Request, res: Response) {
         if (!file) {
           return res.status(400).json({ error: "File audio tidak ditemukan dalam request." });
         }
-        mimeType = file.mimetype;
-
-        // Strip parameters like ;codecs=opus to prevent Gemini API bad request errors
-        if (mimeType.includes(";")) {
-          mimeType = mimeType.split(";")[0].trim();
-        }
-        // Normalize Chrome's video/webm to audio/webm if recorded as audio-only
-        if (mimeType === "video/webm") {
-          mimeType = "audio/webm";
-        }
+        mimeType = detectAudioMimeType(file.buffer, file.originalname, file.mimetype);
 
         // If file is larger than 4MB, upload server-side to Gemini File API
         if (file.buffer.length > 4 * 1024 * 1024) {

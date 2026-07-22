@@ -61,6 +61,18 @@ export default async function handler(req: Request, res: Response) {
       originalname = filenameMatch[1];
     }
     
+    let cleanMime = (mime || "").split(";")[0].trim().toLowerCase();
+    if (!cleanMime || cleanMime === "application/octet-stream" || cleanMime === "binary/octet-stream") {
+      const ext = originalname.toLowerCase().split('.').pop();
+      if (ext === "m4a" || ext === "mp4") cleanMime = "audio/mp4";
+      else if (ext === "wav") cleanMime = "audio/wav";
+      else if (ext === "ogg" || ext === "opus") cleanMime = "audio/ogg";
+      else if (ext === "webm") cleanMime = "audio/webm";
+      else if (ext === "aac") cleanMime = "audio/aac";
+      else if (ext === "flac") cleanMime = "audio/flac";
+      else cleanMime = "audio/mpeg";
+    }
+
     const contentLength = response.headers.get("content-length");
     const sizeMb = contentLength ? (parseInt(contentLength) / (1024 * 1024)).toFixed(2) + " MB" : "Tidak diketahui";
 
@@ -69,7 +81,7 @@ export default async function handler(req: Request, res: Response) {
       fileId,
       fileName: originalname,
       fileSize: sizeMb,
-      mimeType: mime || "audio/mpeg"
+      mimeType: cleanMime
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Tautan Google Drive tidak valid atau tidak dapat diakses secara publik." });
